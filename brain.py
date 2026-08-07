@@ -5,6 +5,7 @@ Orchestrates LLM Inference, Modular Prompts, MemoryEngine & Tools
 
 import os
 import time
+import re
 from typing import List, Dict, Any
 from llama_cpp import Llama
 
@@ -30,6 +31,17 @@ COLOR_JARVIS = "\033[1;32m"
 COLOR_THINK_LABEL = "\033[1;33m"
 COLOR_THINK_TEXT = "\033[2;37m"
 COLOR_INFO = "\033[1;35m"
+
+
+def strip_canned_suffixes(text: str) -> str:
+    """Removes annoying trailing model catchphrases"""
+    patterns = [
+        r"\s*\b(kya chahiye\??|kya problem hai\??|kya chal raha hai tu\??|chal, bata\s*😄\??)\s*$",
+        r"\s*\b(kya chahiye\??|kya problem hai\??)\b"
+    ]
+    for p in patterns:
+        text = re.sub(p, "", text, flags=re.IGNORECASE)
+    return text.strip()
 
 
 class JarvisBrain:
@@ -73,7 +85,7 @@ class JarvisBrain:
         turn_messages = [{"role": "system", "content": current_system_prompt}]
         
         # 4. Context-Aware Relevant Memory Retrieval
-        relevant_mems = self.memory.retrieve_relevant_memories(user_input, limit=3)
+        relevant_mems = self.memory.retrieve_relevant_memories(user_input, limit=4)
         if relevant_mems:
             mem_context = "[FACTS ABOUT VANSH (THE USER) STORED IN MEMORY]:\n" + "\n".join([f"- {m}" for m in relevant_mems])
             turn_messages.append({"role": "system", "content": mem_context})
@@ -156,7 +168,8 @@ class JarvisBrain:
         elapsed = time.time() - start_time
         print(f"{COLOR_RESET}\n{COLOR_INFO}[{elapsed:.1f}s | Intent: {intent}]{COLOR_RESET}\n")
 
-        clean_response = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()
+        raw_clean = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()
+        clean_response = strip_canned_suffixes(raw_clean)
 
         # Save clean turn to history
         self.history.append({"role": "user", "content": user_input})

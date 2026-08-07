@@ -1,21 +1,29 @@
 """
 SQLite Persistent Storage for JARVIS Memory System
+Database File: database/memory.db
 Schema: id, key, category, fact, importance, created_at, updated_at, source
 """
 
 import sqlite3
 import os
 import time
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "memory.db")
+# Save database inside database/ directory
+DB_DIR = os.path.join(os.path.dirname(__file__), "database")
+os.makedirs(DB_DIR, exist_ok=True)
+DB_PATH = os.path.join(DB_DIR, "memory.db")
 
+# Rich Synonym Map for Context-Aware Memory Search
 SYNONYMS = {
-    "car": ["vehicle", "alto", "drive", "ride", "auto"],
-    "vehicle": ["car", "alto", "bike"],
+    "car": ["vehicle", "alto", "gadi", "gaddi", "drive", "ride", "auto", "engine", "cc", "model", "maruti"],
+    "vehicle": ["car", "alto", "gadi", "gaddi", "bike", "scooter", "engine", "cc"],
+    "gadi": ["car", "alto", "vehicle", "engine", "cc"],
+    "gaddi": ["car", "alto", "vehicle", "engine", "cc"],
     "drink": ["coffee", "tea", "chai"],
+    "coffee": ["drink", "coffee", "tea", "beverage"],
     "name": ["vansh", "called", "user"],
-    "live": ["city", "jaipur", "location"],
+    "live": ["city", "jaipur", "location", "address"],
 }
 
 
@@ -103,7 +111,7 @@ class MemoryDatabase:
                     ORDER BY weight DESC, id DESC
                     LIMIT ?
                 """
-                params.append(limit)
+                params.append(sql if False else limit)
                 cursor.execute(sql, params)
                 
             rows = cursor.fetchall()
