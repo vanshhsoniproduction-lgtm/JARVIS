@@ -26,8 +26,8 @@ TEMPORARY_IMPORTANCE_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
-QUERY_PATTERNS = re.compile(
-    r"(\?|\b(which|what|where|who|when|how|bata|tell me|konci|konsi|konsa|kya|can you|do you|which car|what car)\b)",
+PURE_QUERY_PATTERNS = re.compile(
+    r"\b(which car do i|what car do i|what is my|which car i|do i own|which vehicle|what do i|bata mer car|bata merepe|konci car h)\b",
     re.IGNORECASE
 )
 
@@ -37,17 +37,18 @@ class MemoryEngine:
         self.db = db or MemoryDatabase()
 
     def is_statement_fact(self, user_input: str) -> bool:
-        """Determines whether user input is a declarative statement of fact (not a question)"""
-        text = user_input.strip()
-        # If it has a question mark or query keywords, it's NOT a fact statement
-        if QUERY_PATTERNS.search(text):
+        """Determines whether user input contains a factual statement to save"""
+        text_lower = user_input.strip().lower()
+        
+        # Pure queries/questions are NOT facts to save
+        if PURE_QUERY_PATTERNS.search(text_lower):
             return False
             
         fact_triggers = [
-            "i own", "i have", "i drive", "my car", "merepe", "merpee", "mere paas", "mere pas",
-            "my name", "i am called", "i like", "i love", "i prefer", "i live in", "i study at", "save this"
+            "i own", "i owns", "i have", "i drive", "my car", "merepe", "merpee", "mere paas", "mere pas",
+            "my name", "i am called", "i like", "i love", "i prefer", "i live in", "i study at", "save this", "alto"
         ]
-        return any(t in text.lower() for t in fact_triggers)
+        return any(t in text_lower for t in fact_triggers)
 
     def process_and_save_fact(self, user_input: str) -> Optional[Dict[str, Any]]:
         """Convert raw user input into a structured fact about Vansh and save to SQLite"""
@@ -86,14 +87,13 @@ class MemoryEngine:
         return text.strip(" ,!.")
 
     def _convert_to_vansh_fact(self, text: str) -> str:
-        """Transforms 'merepe alto k10 2011 model 998cc h' -> 'Vansh owns Alto K10 (2011 model, 998cc)'"""
-        text = re.sub(r"\b(i own|i have|i drive|my car is|merepe|merpee|mere paas|mere pas|nah)\b", "Vansh owns", text, flags=re.IGNORECASE)
+        """Transforms 'i own an alto k10' -> 'Vansh owns an Alto K10'"""
+        text = re.sub(r"\b(i own|i owns|i have|i drive|my car is|merepe|merpee|mere paas|mere pas|nah)\b", "Vansh owns", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(my name is|i am called)\b", "Vansh's name is", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(i like|i love|i prefer)\b", "Vansh likes", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(i study|i am studying)\b", "Vansh studies", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(i work at|i am working at)\b", "Vansh works at", text, flags=re.IGNORECASE)
         
-        # Clean trailing 'h' or 'hai' in hinglish statements
         text = re.sub(r"\s+\b(h|hai)\b$", "", text, flags=re.IGNORECASE)
 
         if text and not text.startswith("Vansh"):
