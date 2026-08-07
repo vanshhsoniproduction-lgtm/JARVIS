@@ -14,6 +14,8 @@ from config import (
     DEFAULT_CITY,
     DEFAULT_TEMPERATURE,
     DEFAULT_REPEAT_PENALTY,
+    DEFAULT_FREQUENCY_PENALTY,
+    DEFAULT_PRESENCE_PENALTY,
     DEFAULT_TOP_P,
 )
 from prompts import PromptManager
@@ -58,10 +60,11 @@ class JarvisBrain:
         deep = route_info["deep"]
         should_fetch_weather = route_info["fetch_weather"]
         
-        # 2. Structured Memory Saving
-        if intent == "MEMORY_SAVE" or any(w in user_input.lower() for w in ["own", "alto", "car", "name", "live in"]):
+        # 2. Structured Memory Saving (STRICT: Only save if user makes a factual statement, NOT a question!)
+        if self.memory.is_statement_fact(user_input):
             saved_meta = self.memory.process_and_save_fact(user_input)
-            print(f"{COLOR_INFO}[MEMORY SAVED TO SQLITE] Category: {saved_meta['category']} | Fact: '{saved_meta['fact']}'{COLOR_RESET}")
+            if saved_meta:
+                print(f"{COLOR_INFO}[MEMORY PERSISTED IN SQLITE] Category: {saved_meta['category']} | Fact: '{saved_meta['fact']}'{COLOR_RESET}")
 
         # 3. Dynamic Prompt Selection
         current_system_prompt = PromptManager.get_prompt(prompt_type)
@@ -72,7 +75,7 @@ class JarvisBrain:
         # 4. Context-Aware Relevant Memory Retrieval
         relevant_mems = self.memory.retrieve_relevant_memories(user_input, limit=3)
         if relevant_mems:
-            mem_context = "[FACTS ABOUT VANSH (THE USER) FROM SQLITE MEMORY]:\n" + "\n".join([f"- {m}" for m in relevant_mems])
+            mem_context = "[FACTS ABOUT VANSH (THE USER) STORED IN MEMORY]:\n" + "\n".join([f"- {m}" for m in relevant_mems])
             turn_messages.append({"role": "system", "content": mem_context})
             
         # 5. Tool Execution: Weather
@@ -100,6 +103,8 @@ class JarvisBrain:
             temperature=temperature,
             top_p=DEFAULT_TOP_P,
             repeat_penalty=DEFAULT_REPEAT_PENALTY,
+            frequency_penalty=DEFAULT_FREQUENCY_PENALTY,
+            presence_penalty=DEFAULT_PRESENCE_PENALTY,
             max_tokens=max_tokens,
             stream=True,
         )
