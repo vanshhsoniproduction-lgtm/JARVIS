@@ -8,7 +8,14 @@ import re
 from typing import List, Dict
 from llama_cpp import Llama
 
-from config import N_THREADS, N_BATCH, DEFAULT_CITY
+from config import (
+    N_THREADS,
+    N_BATCH,
+    DEFAULT_CITY,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_REPEAT_PENALTY,
+    DEFAULT_TOP_P,
+)
 from prompts import DEEP_PROMPT, FAST_PROMPT
 from router import IntentRouter
 from tools.weather import fetch_weather, extract_city
@@ -87,18 +94,19 @@ class JarvisBrain:
         # Append conversation history (keep last 8 turns)
         turn_messages.extend(self.history[-8:])
         
-        # User turn prompt with /no_think tag injection when deep=False (Disables 11s Qwen3 reasoning latency!)
+        # User turn prompt with /no_think tag injection when deep=False
         user_turn_content = user_input if deep else f"{user_input} /no_think"
         turn_messages.append({"role": "user", "content": user_turn_content})
         
-        temperature = 0.7 if deep else 0.3
-        max_tokens = 2048 if deep else 300
+        temperature = DEFAULT_TEMPERATURE if not deep else 0.7
+        max_tokens = 2048 if deep else 350
         
         start_time = time.time()
         response = self.llm.create_chat_completion(
             messages=turn_messages,
             temperature=temperature,
-            top_p=0.9,
+            top_p=DEFAULT_TOP_P,
+            repeat_penalty=DEFAULT_REPEAT_PENALTY,
             max_tokens=max_tokens,
             stream=True,
         )

@@ -7,3 +7,8 @@ N_BATCH = 512
 
 # Default Location for Weather Tool
 DEFAULT_CITY = "Jaipur"
+
+# Inference Hyper-parameters
+DEFAULT_TEMPERATURE = 0.45
+DEFAULT_REPEAT_PENALTY = 1.15
+DEFAULT_TOP_P = 0.85
