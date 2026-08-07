@@ -24,7 +24,7 @@ COLOR_INFO = "\033[1;35m"
 
 
 def clean_memory_fact(user_input: str) -> str:
-    """Extract clean user preference from raw input like 'sun, i like coffe, save this !'"""
+    """Extract clean user preference from raw input"""
     text = re.sub(r"\b(sun|bhai|bro|hey|listen|please)\b", "", user_input, flags=re.IGNORECASE)
     text = re.sub(r"\b(save this in your memory|save this|save in memory|remember that|remember this|store this|note this)\b", "", text, flags=re.IGNORECASE)
     cleaned = text.strip(" ,!.")
@@ -52,20 +52,20 @@ class JarvisBrain:
         print(f"{COLOR_INFO}[JARVIS Engine] System initialized successfully!{COLOR_RESET}\n")
 
     def process_turn(self, user_input: str) -> str:
-        # Route intent
+        # 1. Route intent
         route_info = IntentRouter.route(user_input)
         intent = route_info["intent"]
         deep = route_info["deep"]
         should_fetch_weather = route_info["fetch_weather"]
         
-        # Handle Memory Save intent
+        # 2. Memory persistence
         if intent == "MEMORY_SAVE":
             fact = clean_memory_fact(user_input)
             mem_key = f"user_fact_{int(time.time())}"
             self.memory.set_memory(mem_key, fact)
-            print(f"{COLOR_INFO}[SQLITE MEMORY STORED] Key: {mem_key} | Fact: '{fact}'{COLOR_RESET}")
+            print(f"{COLOR_INFO}[SQLITE MEMORY STORED] Fact: '{fact}'{COLOR_RESET}")
         
-        # Select System Prompt based on intent router (Fast vs Deep)
+        # 3. Select System Prompt based on intent router (Fast vs Deep)
         current_system_prompt = DEEP_PROMPT if deep else FAST_PROMPT
         
         # Assemble message stack
@@ -87,11 +87,12 @@ class JarvisBrain:
         # Append conversation history (keep last 8 turns)
         turn_messages.extend(self.history[-8:])
         
-        # User turn prompt
-        turn_messages.append({"role": "user", "content": user_input})
+        # User turn prompt with /no_think tag injection when deep=False (Disables 11s Qwen3 reasoning latency!)
+        user_turn_content = user_input if deep else f"{user_input} /no_think"
+        turn_messages.append({"role": "user", "content": user_turn_content})
         
-        temperature = 0.7 if deep else 0.4
-        max_tokens = 2048 if deep else 350
+        temperature = 0.7 if deep else 0.3
+        max_tokens = 2048 if deep else 300
         
         start_time = time.time()
         response = self.llm.create_chat_completion(
@@ -114,20 +115,21 @@ class JarvisBrain:
                 continue
             full_text += content
 
-            # Check for thinking tag (Stream thinking visibly)
+            # Stream thinking visibly when deep mode is active
             if "<think>" in content or ("<think>" in full_text and not in_think and "</think>" not in full_text):
                 if not in_think:
                     in_think = True
-                    if not printed_think_label:
+                    if not printed_think_label and deep:
                         print(f"\n{COLOR_THINK_LABEL}🧠 [JARVIS Thinking...]{COLOR_RESET}\n{COLOR_THINK_TEXT}", end="", flush=True)
                         printed_think_label = True
                     content = content.replace("<think>", "")
 
             if "</think>" in content:
                 before, _, after = content.partition("</think>")
-                if before:
+                if before and deep:
                     print(before, end="", flush=True)
-                print(f"{COLOR_RESET}\n")
+                if deep:
+                    print(f"{COLOR_RESET}\n")
                 in_think = False
                 if after:
                     if not printed_jarvis_label:
@@ -137,7 +139,8 @@ class JarvisBrain:
                 continue
 
             if in_think:
-                print(content, end="", flush=True)
+                if deep:
+                    print(content, end="", flush=True)
             else:
                 if not printed_jarvis_label:
                     print(f"{COLOR_JARVIS}JARVIS:{COLOR_RESET} ", end="", flush=True)
@@ -149,7 +152,7 @@ class JarvisBrain:
 
         clean_response = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()
 
-        # Save clean turn to history
+        # Save clean turn to history (storing user_input without /no_think artifact)
         self.history.append({"role": "user", "content": user_input})
         self.history.append({"role": "assistant", "content": clean_response})
         
