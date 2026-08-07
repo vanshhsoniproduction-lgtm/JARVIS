@@ -1,11 +1,11 @@
 """
-JARVIS Brain Engine - Orchestrates LLM, Prompts, Tools & Memory
+JARVIS Brain Engine v0.3
+Orchestrates LLM Inference, Modular Prompts, MemoryEngine & Tools
 """
 
 import os
 import time
-import re
-from typing import List, Dict
+from typing import List, Dict, Any
 from llama_cpp import Llama
 
 from config import (
@@ -16,10 +16,10 @@ from config import (
     DEFAULT_REPEAT_PENALTY,
     DEFAULT_TOP_P,
 )
-from prompts import DEEP_PROMPT, FAST_PROMPT
+from prompts import PromptManager
 from router import IntentRouter
 from tools.weather import fetch_weather, extract_city
-from database import MemoryManager
+from memory import MemoryEngine
 
 # Terminal Colors
 COLOR_RESET = "\033[0m"
@@ -30,78 +30,71 @@ COLOR_THINK_TEXT = "\033[2;37m"
 COLOR_INFO = "\033[1;35m"
 
 
-def clean_memory_fact(user_input: str) -> str:
-    """Extract clean user preference from raw input"""
-    text = re.sub(r"\b(sun|bhai|bro|hey|listen|please)\b", "", user_input, flags=re.IGNORECASE)
-    text = re.sub(r"\b(save this in your memory|save this|save in memory|remember that|remember this|store this|note this)\b", "", text, flags=re.IGNORECASE)
-    cleaned = text.strip(" ,!.")
-    return cleaned if cleaned else user_input.strip()
-
-
 class JarvisBrain:
     def __init__(self, model_path: str):
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model not found at: {model_path}")
+            raise FileNotFoundError(f"Model file not found at: {model_path}")
 
-        print(f"{COLOR_INFO}[JARVIS Engine] Loading model with Metal GPU + {N_THREADS} Physical CPU Cores...{COLOR_RESET}")
+        print(f"{COLOR_INFO}[JARVIS Engine v0.3] Loading model with Metal GPU + {N_THREADS} Physical CPU Cores...{COLOR_RESET}")
         
         self.llm = Llama(
             model_path=model_path,
             n_ctx=4096,
-            n_gpu_layers=-1, # Apple Silicon GPU
+            n_gpu_layers=-1,  # Apple Silicon Metal GPU
             n_threads=N_THREADS, # Tuned for Apple M5 physical cores
             n_batch=N_BATCH,
             verbose=False,
         )
         
-        self.memory = MemoryManager()
+        self.memory = MemoryEngine()
         self.history: List[Dict[str, str]] = []
-        print(f"{COLOR_INFO}[JARVIS Engine] System initialized successfully!{COLOR_RESET}\n")
+        print(f"{COLOR_INFO}[JARVIS Engine v0.3] System initialized successfully!{COLOR_RESET}\n")
 
     def process_turn(self, user_input: str) -> str:
-        # 1. Route intent
+        # 1. Route Intent
         route_info = IntentRouter.route(user_input)
         intent = route_info["intent"]
+        prompt_type = route_info["prompt_type"]
         deep = route_info["deep"]
         should_fetch_weather = route_info["fetch_weather"]
         
-        # 2. Memory persistence
-        if intent == "MEMORY_SAVE":
-            fact = clean_memory_fact(user_input)
-            mem_key = f"user_fact_{int(time.time())}"
-            self.memory.set_memory(mem_key, fact)
-            print(f"{COLOR_INFO}[SQLITE MEMORY STORED] Fact: '{fact}'{COLOR_RESET}")
+        # 2. Structured Memory Saving (Auto-saves user facts like "I own an Alto K10")
+        if intent == "MEMORY_SAVE" or ("own" in user_input.lower() and "car" in user_input.lower()):
+            saved_meta = self.memory.process_and_save_fact(user_input)
+            print(f"{COLOR_INFO}[MEMORY PERSISTED IN SQLITE] Category: {saved_meta['category']} | Importance: {saved_meta['importance']} | Fact: '{saved_meta['fact']}'{COLOR_RESET}")
+
+        # 3. Dynamic Prompt Selection
+        current_system_prompt = PromptManager.get_prompt(prompt_type)
         
-        # 3. Select System Prompt based on intent router (Fast vs Deep)
-        current_system_prompt = DEEP_PROMPT if deep else FAST_PROMPT
-        
-        # Assemble message stack
+        # Assemble Turn Messages
         turn_messages = [{"role": "system", "content": current_system_prompt}]
         
-        # Include persistent memory context from SQLite if available
-        memories = self.memory.get_all_memories()
-        if memories:
-            mem_summary = "[PERMANENT USER MEMORIES (SAVED IN SQLITE)]:\n" + "\n".join([f"- {m}" for m in memories])
-            turn_messages.append({"role": "system", "content": mem_summary})
+        # 4. Context-Aware Relevant Memory Retrieval (Only retrieves relevant facts matching query)
+        relevant_mems = self.memory.retrieve_relevant_memories(user_input, limit=3)
+        if relevant_mems:
+            mem_context = "[RETRIEVED USER MEMORIES FROM SQLITE]:\n" + "\n".join([f"- {m}" for m in relevant_mems])
+            turn_messages.append({"role": "system", "content": mem_context})
             
-        # Tool Execution: Weather
+        # 5. Tool Execution: Weather
         if should_fetch_weather:
             city = extract_city(user_input, DEFAULT_CITY)
             wx_data = fetch_weather(city)
             if wx_data:
                 turn_messages.append({"role": "system", "content": wx_data})
                 
-        # Append conversation history (keep last 8 turns)
-        turn_messages.extend(self.history[-8:])
+        # 6. Conversation History (Keep last 6 turns for optimal context & speed)
+        turn_messages.extend(self.history[-6:])
         
-        # User turn prompt with /no_think tag injection when deep=False
+        # 7. User Turn Formatting (Inject /no_think tag when deep reasoning is False to bypass 10s latency)
         user_turn_content = user_input if deep else f"{user_input} /no_think"
         turn_messages.append({"role": "user", "content": user_turn_content})
         
-        temperature = DEFAULT_TEMPERATURE if not deep else 0.7
-        max_tokens = 2048 if deep else 350
+        temperature = 0.7 if (deep or intent == "ROAST") else DEFAULT_TEMPERATURE
+        max_tokens = 1500 if deep else 250
         
         start_time = time.time()
+        
+        # LLM Inference Call
         response = self.llm.create_chat_completion(
             messages=turn_messages,
             temperature=temperature,
@@ -156,7 +149,7 @@ class JarvisBrain:
                 print(content, end="", flush=True)
 
         elapsed = time.time() - start_time
-        print(f"{COLOR_RESET}\n{COLOR_INFO}[{elapsed:.1f}s | Mode: {intent}]{COLOR_RESET}\n")
+        print(f"{COLOR_RESET}\n{COLOR_INFO}[{elapsed:.1f}s | Intent: {intent}]{COLOR_RESET}\n")
 
         clean_response = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()
 
