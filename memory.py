@@ -32,13 +32,12 @@ class MemoryEngine:
         self.db = db or MemoryDatabase()
 
     def process_and_save_fact(self, user_input: str) -> Dict[str, Any]:
-        """Convert raw user input into a structured fact and save to SQLite"""
+        """Convert raw user input into a structured fact about Vansh and save to SQLite"""
         clean_text = self._sanitize_input(user_input)
-        structured_fact = self._convert_to_third_person(clean_text)
+        structured_fact = self._convert_to_vansh_fact(clean_text)
         category = self._classify_category(structured_fact)
         importance = self._calculate_importance(structured_fact)
         
-        # Unique deterministic key based on core subjects or timestamp
         key = self._generate_key(structured_fact)
         
         self.db.save_memory(
@@ -62,20 +61,22 @@ class MemoryEngine:
         return [r["fact"] for r in results]
 
     def _sanitize_input(self, text: str) -> str:
-        text = re.sub(r"\b(sun|bhai|bro|hey|listen|please|save this in your memory|save this|save in memory|remember that|remember this|store this|note this)\b", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(sun|bhai|bro|hey|listen|please|save this in your memory|save this|save in memory|remember that|remember this|store this|note this|ok|\?)\b", "", text, flags=re.IGNORECASE)
         return text.strip(" ,!.")
 
-    def _convert_to_third_person(self, text: str) -> str:
-        """Transforms 'I own an Alto K10' -> 'User owns an Alto K10'"""
-        text = re.sub(r"\b(i own|i have|i drive|my car is)\b", "User owns", text, flags=re.IGNORECASE)
-        text = re.sub(r"\b(my name is|i am called)\b", "User's name is", text, flags=re.IGNORECASE)
-        text = re.sub(r"\b(i like|i love|i prefer)\b", "User likes", text, flags=re.IGNORECASE)
-        text = re.sub(r"\b(i study|i am studying)\b", "User studies", text, flags=re.IGNORECASE)
-        text = re.sub(r"\b(i work at|i am working at)\b", "User works at", text, flags=re.IGNORECASE)
+    def _convert_to_vansh_fact(self, text: str) -> str:
+        """Transforms 'merepe alto h' -> 'Vansh owns an Alto'"""
+        text = re.sub(r"\b(i own|i have|i drive|my car is|merepe|merpee|mere paas|mere pas)\b", "Vansh owns", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(my name is|i am called)\b", "Vansh's name is", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(i like|i love|i prefer)\b", "Vansh likes", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(i study|i am studying)\b", "Vansh studies", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(i work at|i am working at)\b", "Vansh works at", text, flags=re.IGNORECASE)
         
-        # Capitalize first letter
-        if text and not text.startswith("User"):
-            text = f"User: {text}"
+        # Clean trailing 'h' or 'hai' in hinglish statements like 'Vansh owns alto h'
+        text = re.sub(r"\s+\b(h|hai)\b$", "", text, flags=re.IGNORECASE)
+
+        if text and not text.startswith("Vansh"):
+            text = f"Vansh: {text}"
         return text
 
     def _classify_category(self, fact: str) -> str:
@@ -105,7 +106,7 @@ class MemoryEngine:
 
     def _generate_key(self, fact: str) -> str:
         fact_lower = fact.lower()
-        if "owns" in fact_lower or "car" in fact_lower or "vehicle" in fact_lower:
+        if "owns" in fact_lower or "car" in fact_lower or "vehicle" in fact_lower or "alto" in fact_lower:
             return "user_vehicle"
         if "name" in fact_lower:
             return "user_name"

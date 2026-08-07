@@ -58,10 +58,10 @@ class JarvisBrain:
         deep = route_info["deep"]
         should_fetch_weather = route_info["fetch_weather"]
         
-        # 2. Structured Memory Saving (Auto-saves user facts like "I own an Alto K10")
-        if intent == "MEMORY_SAVE" or ("own" in user_input.lower() and "car" in user_input.lower()):
+        # 2. Structured Memory Saving
+        if intent == "MEMORY_SAVE" or any(w in user_input.lower() for w in ["own", "alto", "car", "name", "live in"]):
             saved_meta = self.memory.process_and_save_fact(user_input)
-            print(f"{COLOR_INFO}[MEMORY PERSISTED IN SQLITE] Category: {saved_meta['category']} | Importance: {saved_meta['importance']} | Fact: '{saved_meta['fact']}'{COLOR_RESET}")
+            print(f"{COLOR_INFO}[MEMORY SAVED TO SQLITE] Category: {saved_meta['category']} | Fact: '{saved_meta['fact']}'{COLOR_RESET}")
 
         # 3. Dynamic Prompt Selection
         current_system_prompt = PromptManager.get_prompt(prompt_type)
@@ -69,10 +69,10 @@ class JarvisBrain:
         # Assemble Turn Messages
         turn_messages = [{"role": "system", "content": current_system_prompt}]
         
-        # 4. Context-Aware Relevant Memory Retrieval (Only retrieves relevant facts matching query)
+        # 4. Context-Aware Relevant Memory Retrieval
         relevant_mems = self.memory.retrieve_relevant_memories(user_input, limit=3)
         if relevant_mems:
-            mem_context = "[RETRIEVED USER MEMORIES FROM SQLITE]:\n" + "\n".join([f"- {m}" for m in relevant_mems])
+            mem_context = "[FACTS ABOUT VANSH (THE USER) FROM SQLITE MEMORY]:\n" + "\n".join([f"- {m}" for m in relevant_mems])
             turn_messages.append({"role": "system", "content": mem_context})
             
         # 5. Tool Execution: Weather
@@ -82,10 +82,10 @@ class JarvisBrain:
             if wx_data:
                 turn_messages.append({"role": "system", "content": wx_data})
                 
-        # 6. Conversation History (Keep last 6 turns for optimal context & speed)
+        # 6. Conversation History (Keep last 6 turns)
         turn_messages.extend(self.history[-6:])
         
-        # 7. User Turn Formatting (Inject /no_think tag when deep reasoning is False to bypass 10s latency)
+        # 7. User Turn Formatting
         user_turn_content = user_input if deep else f"{user_input} /no_think"
         turn_messages.append({"role": "user", "content": user_turn_content})
         
@@ -153,7 +153,7 @@ class JarvisBrain:
 
         clean_response = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()
 
-        # Save clean turn to history (storing user_input without /no_think artifact)
+        # Save clean turn to history
         self.history.append({"role": "user", "content": user_input})
         self.history.append({"role": "assistant", "content": clean_response})
         
