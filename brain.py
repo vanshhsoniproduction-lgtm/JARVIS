@@ -169,15 +169,19 @@ class JarvisBrain:
         import random
         return random.choice(questions)
 
-    def process_turn(self, user_input: str) -> str:
+    def process_turn_stream(self, user_input: str):
+        """
+        Yields ('token', content) in real-time as tokens arrive from LLM.
+        Queues complete sentences to background TTS worker.
+        Yields ('done', final_response) when complete.
+        """
         self._turn_count += 1
 
         # ── 0. Proactive Check-In (before routing) ───────────────────────────
         proactive_question = self._check_proactive_temp_state()
         if proactive_question:
             print(f"{COLOR_INFO}[JARVIS Proactive] {proactive_question}{COLOR_RESET}\n")
-            # Speak the proactive question, then continue processing user input
-            self.voice.speak(proactive_question)
+            self.voice.speak_sentence(proactive_question)
 
         # ── 1. Route Intent ───────────────────────────────────────────────────
         route_info = IntentRouter.route(user_input)
@@ -210,7 +214,7 @@ class JarvisBrain:
             )
             print(f"{COLOR_INFO}[DYNAMIC MEMORY SAVED] {fact_str}{COLOR_RESET}")
 
-        # ── 3. Memory Saving — only for non-health factual statements (not questions) ─────────
+        # ── 3. Memory Saving ──────────────────────────────────────────────────
         is_question_input = user_input.strip().endswith("?") or bool(
             re.search(r"^\s*(who|what|whats|which|where|how|do|does|is|are|should|can|could|would|will)\b", user_input, re.I)
         )
@@ -226,7 +230,6 @@ class JarvisBrain:
         # ── 5. Assemble Turn Messages ─────────────────────────────────────────
         turn_messages = [{"role": "system", "content": current_system_prompt}]
 
-        # Inject real current time
         now = datetime.now()
         time_context = f"[CURRENT TIME] {now.strftime('%I:%M %p')}, {now.strftime('%A, %d %B %Y')}"
         turn_messages.append({"role": "system", "content": time_context})
@@ -269,7 +272,6 @@ class JarvisBrain:
             temperature = TEMPERATURE_CHAT
 
         max_tokens = 1500 if deep else 300
-
         start_time = time.time()
 
         # ── 11. LLM Inference — Streaming ─────────────────────────────────────
@@ -297,7 +299,7 @@ class JarvisBrain:
                 continue
             full_text += content
 
-            # ── Think mode handling ──────────────────────────────────────────
+            # Think mode handling
             if "<think>" in content or ("<think>" in full_text and not in_think and "</think>" not in full_text):
                 if not in_think:
                     in_think = True
@@ -319,6 +321,7 @@ class JarvisBrain:
                         printed_jarvis_label = True
                     print(after, end="", flush=True)
                     sentence_buffer += after
+                    yield ("token", after)
                 continue
 
             if in_think:
@@ -330,34 +333,26 @@ class JarvisBrain:
                     printed_jarvis_label = True
                 print(content, end="", flush=True)
 
+                # Yield token directly to stream for real-time UI display!
+                yield ("token", content)
+
                 if TTS_SENTENCE_STREAMING:
-                    # Buffer and stream TTS sentence by sentence
                     sentence_buffer += content
-                    # Check if we have a complete sentence
                     sentences = SENTENCE_SPLIT_RE.split(sentence_buffer)
                     if len(sentences) > 1:
-                        # All but last are complete sentences — speak them now
                         for sent in sentences[:-1]:
-                            sent = sent.strip()
-                            if sent:
-                                self.voice.speak_sentence(sent)
-                        # Keep the incomplete last fragment
+                            s_clean = sent.strip()
+                            if s_clean:
+                                self.voice.speak_sentence(s_clean)
                         sentence_buffer = sentences[-1]
 
         elapsed = time.time() - start_time
         print(f"{COLOR_RESET}\n{COLOR_INFO}[{elapsed:.1f}s | Intent: {intent}]{COLOR_RESET}\n")
 
-        # Speak any remaining sentence fragment
         if TTS_SENTENCE_STREAMING and sentence_buffer.strip():
             self.voice.speak_sentence(sentence_buffer.strip())
-        elif not TTS_SENTENCE_STREAMING:
-            # Legacy mode: speak full response
-            raw_clean = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()
-            clean_response = strip_canned_suffixes(raw_clean)
-            if clean_response:
-                self.voice.speak(clean_response)
 
-        # ── 12. Clean Response for History ───────────────────────────────────
+        # ── 12. Clean Response for History & Completion ───────────────────────
         raw_clean = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()
         clean_response = strip_canned_suffixes(raw_clean)
 
@@ -369,4 +364,12 @@ class JarvisBrain:
         self.history.append({"role": "assistant", "content": clean_response})
         self._trim_history()
 
-        return clean_response
+        yield ("done", clean_response)
+
+    def process_turn(self, user_input: str) -> str:
+        """Synchronous wrapper around process_turn_stream for backward compatibility."""
+        final_resp = ""
+        for chunk_type, content in self.process_turn_stream(user_input):
+            if chunk_type == "done":
+                final_resp = content
+        return final_resp or "Yes Vansh, how can I help?"

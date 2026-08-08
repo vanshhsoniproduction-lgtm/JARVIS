@@ -689,6 +689,64 @@
       }
     }
 
+    // ── Live Stream Request Engine (Real-Time UI Display + Parallel TTS) ───
+    async function sendStreamRequest(text) {
+      document.getElementById('received-text-display').innerText = '';
+      setState('processing');
+
+      try {
+        const res = await fetch(`${API_BASE}/api/chat_stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text })
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let accumulatedText = '';
+        let hasSwitchedToSpeaking = false;
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop(); // Keep trailing incomplete line
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.type === 'token') {
+                  if (!hasSwitchedToSpeaking) {
+                    setState('speaking');
+                    hasSwitchedToSpeaking = true;
+                  }
+                  accumulatedText += data.content;
+                  document.getElementById('received-text-display').innerText = accumulatedText;
+                } else if (data.type === 'done') {
+                  accumulatedText = data.content;
+                  document.getElementById('received-text-display').innerText = accumulatedText;
+                }
+              } catch (e) {}
+            }
+          }
+        }
+
+        if (accumulatedText) {
+          appendMessage('JARVIS', accumulatedText, 'jarvis');
+        }
+
+        setTimeout(() => setState('idle'), 3500);
+      } catch (err) {
+        console.error('[STREAM CHAT ERROR]', err);
+        setState('idle');
+      }
+      refreshTelemetry();
+    }
+
     // ── Send Text Message (Text Input) ─────────────────────────────────
     async function sendTextMessage() {
       if (currentState !== 'idle') return;
@@ -699,31 +757,10 @@
       input.value = '';
       appendMessage('YOU', text, 'user');
       document.getElementById('sent-text-display').innerText = `"${text}"`;
-      setState('processing');
-
-      try {
-        const res = await fetch(`${API_BASE}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text })
-        });
-        const data = await res.json();
-        if (data.response) {
-          appendMessage('JARVIS', data.response, 'jarvis');
-          document.getElementById('received-text-display').innerText = data.response;
-          setState('speaking');
-          setTimeout(() => setState('idle'), 4000);
-        } else {
-          setState('idle');
-        }
-      } catch (err) {
-        console.error('[CHAT ERROR]', err);
-        setState('idle');
-      }
-      refreshTelemetry();
+      await sendStreamRequest(text);
     }
 
-    // ── Voice Input (Split: Phase 1 Record → Phase 2 LLM) ─────────────
+    // ── Voice Input (Phase 1: Record → Phase 2: Live Stream) ───────────
     async function triggerVoiceInput() {
       if (currentState !== 'idle') return;
 
@@ -737,11 +774,9 @@
 
         if (data.status === 'transcribed' && data.user && data.user.trim()) {
           transcript = data.user.trim();
-          // Immediately show what the user said
           document.getElementById('sent-text-display').innerText = `"${transcript}"`;
           appendMessage('YOU', transcript, 'user');
         } else {
-          // No speech detected — go back to idle
           document.getElementById('sent-text-display').innerText = 'No speech detected. Try again.';
           setState('idle');
           return;
@@ -752,30 +787,8 @@
         return;
       }
 
-      // Phase 2: Send transcription to LLM via /api/chat
-      setState('processing');
-
-      try {
-        const res = await fetch(`${API_BASE}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: transcript })
-        });
-        const data = await res.json();
-
-        if (data.response) {
-          appendMessage('JARVIS', data.response, 'jarvis');
-          document.getElementById('received-text-display').innerText = data.response;
-          setState('speaking');
-          setTimeout(() => setState('idle'), 4000);
-        } else {
-          setState('idle');
-        }
-      } catch (err) {
-        console.error('[CHAT ERROR]', err);
-        setState('idle');
-      }
-      refreshTelemetry();
+      // Phase 2: Stream response to UI & speak in real-time
+      await sendStreamRequest(transcript);
     }
 
     // ── Wake Word Polling ──────────────────────────────────────────────

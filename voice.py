@@ -59,6 +59,24 @@ class VoiceEngine:
                 print(f"{COLOR_INFO}[VOICE STT] Error loading Whisper: {e}{COLOR_RESET}")
 
         self._init_tts()
+        
+        # Async TTS Queue Worker — speaks sentences in background without blocking stream
+        import queue
+        import threading
+        self._tts_queue = queue.Queue()
+        self._tts_thread = threading.Thread(target=self._tts_worker, daemon=True)
+        self._tts_thread.start()
+
+    def _tts_worker(self):
+        while True:
+            try:
+                text = self._tts_queue.get()
+                if text is None:
+                    break
+                self.speak(text)
+                self._tts_queue.task_done()
+            except Exception:
+                pass
 
     def _init_tts(self):
         try:
@@ -147,8 +165,9 @@ class VoiceEngine:
             return None
 
     def speak_sentence(self, text: str):
-        """Stream a single sentence via TTS (called by brain.py for sentence-streaming)."""
-        self.speak(text)
+        """Stream a single sentence via async TTS queue without blocking stream."""
+        if text and text.strip():
+            self._tts_queue.put(text.strip())
 
     def speak(self, text: str):
         """Synthesize TTS speech and play audio response."""

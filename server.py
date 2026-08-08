@@ -99,6 +99,52 @@ def get_telemetry():
         return json.dumps({"location": "Jaipur, Rajasthan", "health": "100% Healthy", "error": str(e)})
 
 
+@app.route('/api/chat_stream', method=['POST', 'OPTIONS'])
+def handle_chat_stream():
+    global is_server_busy
+    if request.method == 'OPTIONS':
+        return {}
+
+    try:
+        data = request.json or {}
+        text = data.get("text", "").strip()
+
+        if not text:
+            response.content_type = 'application/json'
+            return json.dumps({"error": "Empty text query"})
+
+        # Set server busy
+        with busy_lock:
+            is_server_busy = True
+        if wake_engine:
+            wake_engine.pause()
+
+        response.content_type = 'text/event-stream'
+        response.headers['Cache-Control'] = 'no-cache'
+        response.headers['Connection'] = 'keep-alive'
+
+        def generate():
+            try:
+                print(f"\033[1;32m[SERVER CHAT STREAM RECV]\033[0m {text}")
+                for chunk_type, content in brain.process_turn_stream(text):
+                    payload = json.dumps({"type": chunk_type, "content": content})
+                    yield f"data: {payload}\n\n"
+            except Exception as e:
+                print(f"[STREAM ERROR] {e}")
+                payload = json.dumps({"type": "error", "content": str(e)})
+                yield f"data: {payload}\n\n"
+            finally:
+                with busy_lock:
+                    is_server_busy = False
+                if wake_engine:
+                    wake_engine.resume()
+
+        return generate()
+    except Exception as e:
+        response.content_type = 'application/json'
+        return json.dumps({"error": str(e)})
+
+
 @app.route('/api/chat', method=['POST', 'OPTIONS'])
 def handle_chat():
     global is_server_busy
