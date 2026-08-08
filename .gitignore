@@ -1,15 +1,21 @@
-# Python virtual environment
+# Virtual environments
 .venv/
+.venv-tts/
 venv/
 ENV/
 
-# Large Model Binary Files
+# Large Model Binary Files & Heavy Models
 *.gguf
 model/
-models/*.gguf
+models/
+*.bin
+*.onnx
+*.pt
+*.wav
 
 # Local Database & Secrets
 *.db
+database/*.db
 *.sqlite
 .env
 .env.local

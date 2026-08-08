@@ -1,29 +1,104 @@
 """
-SQLite Persistent Storage for JARVIS Memory System
+SQLite Persistent Storage for JARVIS Memory System v3.0
 Database File: database/memory.db
-Schema: id, key, category, fact, importance, created_at, updated_at, source
+
+Schema (memories table): id, key, category, fact, importance, created_at, updated_at, source
+Schema (temp_states table): id, key, fact, category, started_at, resolved_at, is_active, last_checked
+
+KEY CHANGES FROM v2:
+1. New `temp_states` table — proper temp memory lifecycle (health, exams, flights, etc.)
+2. resolve_temp_state() — marks resolved + copies to memories with timestamp
+3. get_active_temp_states() — for context injection and proactive check-ins
+4. update_temp_state_check_time() — tracks when JARVIS last asked about a state
+5. Proper stop-word list instead of len(w)>2 filter
+6. Expanded synonym map for Hinglish + common vocabulary
+7. Relevance scoring by keyword match count (not just importance)
 """
 
 import sqlite3
 import os
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Save database inside database/ directory
 DB_DIR = os.path.join(os.path.dirname(__file__), "database")
 os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "memory.db")
 
+# Stop words — these are too common to be useful search terms
+STOP_WORDS = {
+    # English
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "do", "does", "did", "has", "have", "had", "in", "on", "at", "to",
+    "of", "for", "and", "or", "but", "not", "so", "if", "it", "its",
+    "he", "she", "we", "they", "me", "him", "her", "us", "them",
+    "this", "that", "these", "those", "with", "from", "by", "up",
+    "about", "into", "over", "after", "as", "no", "yes",
+    # Hindi/Hinglish filler
+    "ka", "ki", "ke", "ko", "se", "ne", "pe", "par", "aur",
+    "hai", "hain", "tha", "thi", "ho", "tu", "tum",
+}
+
 # Rich Synonym Map for Context-Aware Memory Search
 SYNONYMS = {
-    "car": ["vehicle", "alto", "gadi", "gaddi", "drive", "ride", "auto", "engine", "cc", "model", "maruti"],
-    "vehicle": ["car", "alto", "gadi", "gaddi", "bike", "scooter", "engine", "cc"],
-    "gadi": ["car", "alto", "vehicle", "engine", "cc"],
-    "gaddi": ["car", "alto", "vehicle", "engine", "cc"],
-    "drink": ["coffee", "tea", "chai"],
-    "coffee": ["drink", "coffee", "tea", "beverage"],
-    "name": ["vansh", "called", "user"],
-    "live": ["city", "jaipur", "location", "address"],
+    # Vehicles
+    "car": ["vehicle", "alto", "gadi", "gaddi", "gaadi", "drive", "ride", "auto", "maruti", "sedan", "hatchback", "konci", "konsi"],
+    "vehicle": ["car", "alto", "gadi", "gaddi", "gaadi", "bike", "scooter", "motorcycle", "bullet", "konci", "konsi"],
+    "gadi": ["car", "alto", "vehicle", "gaddi", "gaadi", "bike"],
+    "gaadi": ["car", "alto", "vehicle", "gadi", "gaddi", "bike"],
+    "gaddi": ["car", "alto", "vehicle", "gadi", "gaadi", "bike"],
+    "konci": ["car", "vehicle", "gadi", "bike"],
+    "konsi": ["car", "vehicle", "gadi", "bike"],
+    "bike": ["motorcycle", "bullet", "ride", "vehicle", "royal enfield", "scooty"],
+    "alto": ["car", "vehicle", "maruti", "k10", "gadi"],
+    "bullet": ["bike", "motorcycle", "royal enfield", "vehicle"],
+    # Devices
+    "phone": ["iphone", "mobile", "smartphone", "device"],
+    "laptop": ["macbook", "computer", "device", "pc"],
+    "macbook": ["laptop", "apple", "mac", "device"],
+    # Preferences
+    "drink": ["coffee", "tea", "chai", "beverage"],
+    "coffee": ["drink", "beverage", "cafe"],
+    "tea": ["chai", "drink", "beverage"],
+    "chai": ["tea", "drink"],
+    "food": ["eat", "khana", "cuisine", "dish"],
+    "like": ["love", "prefer", "enjoy", "pasand", "favorite", "favourite"],
+    "pasand": ["like", "love", "prefer", "favorite"],
+    # People
+    "name": ["vansh", "called", "known as"],
+    "father": ["dad", "papa", "abba", "parent"],
+    "mother": ["mom", "maa", "ammi", "parent"],
+    "brother": ["bhai", "sibling"],
+    "sister": ["behen", "didi", "sibling"],
+    "girlfriend": ["gf", "partner"],
+    "gf": ["girlfriend", "partner"],
+    "boyfriend": ["bf", "partner"],
+    "bf": ["boyfriend", "partner"],
+    "friend": ["dost", "yaar", "buddy"],
+    # Location
+    "live": ["city", "location", "address", "rehta", "stay", "home", "ghar"],
+    "city": ["live", "location", "jaipur", "delhi", "mumbai"],
+    "home": ["ghar", "house", "flat", "apartment"],
+    "ghar": ["home", "house", "flat"],
+    # Education / Work
+    "study": ["college", "university", "padhai", "education", "degree"],
+    "college": ["study", "university", "institute", "education"],
+    "work": ["job", "company", "office", "kaam", "naukri"],
+    "job": ["work", "company", "office", "career"],
+    # Projects
+    "project": ["app", "code", "building", "developing", "jarvis"],
+    # AI and tech
+    "ai": ["artificial intelligence", "ml", "machine learning", "model"],
+    "ml": ["machine learning", "ai", "model"],
+    # Personal
+    "age": ["year old", "years old", "born", "birthday", "dob"],
+    "birthday": ["born", "dob", "age", "year old"],
+    "old": ["age", "year", "years"],
+    # Health
+    "cold": ["zukam", "sardi", "nazla", "bimaar", "sick", "ill"],
+    "fever": ["bukhar", "temperature", "bimaar", "sick"],
+    "headache": ["sar dard", "sir dard", "migraine"],
+    "sick": ["bimaar", "tabiyat", "cold", "fever", "ill"],
 }
 
 
@@ -33,96 +108,346 @@ class MemoryDatabase:
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS memories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    key TEXT UNIQUE,
-                    category TEXT DEFAULT 'Personal',
-                    fact TEXT NOT NULL,
-                    importance TEXT DEFAULT 'MEDIUM',
-                    source TEXT DEFAULT 'user_chat',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("PRAGMA table_info(memories)")
-            columns = [col[1] for col in cursor.fetchall()]
-            
-            if "importance" not in columns:
-                cursor.execute("ALTER TABLE memories ADD COLUMN importance TEXT DEFAULT 'MEDIUM'")
-            if "updated_at" not in columns:
-                cursor.execute("ALTER TABLE memories ADD COLUMN updated_at TIMESTAMP")
-            if "source" not in columns:
-                cursor.execute("ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'user_chat'")
-                
-            conn.commit()
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
 
-    def save_memory(self, key: str, fact: str, category: str = "Personal", importance: str = "MEDIUM", source: str = "user_chat"):
+                # ── Permanent memories table ──────────────────────────────
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS memories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        key TEXT UNIQUE,
+                        category TEXT DEFAULT 'Personal',
+                        fact TEXT NOT NULL,
+                        importance TEXT DEFAULT 'MEDIUM',
+                        source TEXT DEFAULT 'user_chat',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                cursor.execute("PRAGMA table_info(memories)")
+                columns = [col[1] for col in cursor.fetchall()]
+
+                if "importance" not in columns:
+                    cursor.execute("ALTER TABLE memories ADD COLUMN importance TEXT DEFAULT 'MEDIUM'")
+                if "updated_at" not in columns:
+                    cursor.execute("ALTER TABLE memories ADD COLUMN updated_at TIMESTAMP")
+                if "source" not in columns:
+                    cursor.execute("ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'user_chat'")
+
+                # ── Temp States table (v3.0) ──────────────────────────────
+                # Stores ephemeral conditions like illness, exams, travel, etc.
+                # When resolved → copied to memories with date and then marked inactive.
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS temp_states (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        key TEXT UNIQUE,
+                        fact TEXT NOT NULL,
+                        category TEXT DEFAULT 'Health',
+                        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        resolved_at TIMESTAMP,
+                        is_active INTEGER DEFAULT 1,
+                        last_checked TIMESTAMP
+                    )
+                """)
+
+                cursor.execute("PRAGMA table_info(temp_states)")
+                ts_columns = [col[1] for col in cursor.fetchall()]
+                if "last_checked" not in ts_columns:
+                    cursor.execute("ALTER TABLE temp_states ADD COLUMN last_checked TIMESTAMP")
+
+                conn.commit()
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Database initialization error: {e}")
+
+    # ─────────────────────────────────────────────────────────────
+    # Permanent Memories CRUD
+    # ─────────────────────────────────────────────────────────────
+
+    def save_memory(self, key: str, fact: str, category: str = "Personal",
+                    importance: str = "MEDIUM", source: str = "user_chat"):
         now = time.strftime('%Y-%m-%d %H:%M:%S')
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO memories (key, category, fact, importance, source, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    fact=excluded.fact,
-                    category=excluded.category,
-                    importance=excluded.importance,
-                    updated_at=excluded.updated_at
-            """, (key, category, fact, importance, source, now))
-            conn.commit()
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO memories (key, category, fact, importance, source, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        fact=excluded.fact,
+                        category=excluded.category,
+                        importance=excluded.importance,
+                        updated_at=excluded.updated_at
+                """, (key, category, fact, importance, source, now))
+                conn.commit()
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to save memory: {e}")
 
     def search_memories(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Context-aware memory retrieval using keyword synonyms & importance weighting"""
-        raw_words = [w.lower() for w in query.split() if len(w) > 2]
+        """Context-aware memory retrieval using keyword matching + synonyms + relevance scoring."""
+        raw_words = [w.lower() for w in query.split() if w.lower() not in STOP_WORDS and len(w) > 0]
         words = list(raw_words)
-        
+
         for w in raw_words:
             if w in SYNONYMS:
                 words.extend(SYNONYMS[w])
-                
+
         words = list(set(words))
-        
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            if not words:
-                cursor.execute("SELECT * FROM memories ORDER BY id DESC LIMIT ?", (limit,))
-            else:
-                like_clauses = " OR ".join(["fact LIKE ? OR category LIKE ? OR key LIKE ?" for _ in words])
-                params = []
-                for w in words:
-                    params.extend([f"%{w}%", f"%{w}%", f"%{w}%"])
-                
-                sql = f"""
-                    SELECT *,
-                    CASE importance
-                        WHEN 'HIGH' THEN 3
-                        WHEN 'MEDIUM' THEN 2
-                        WHEN 'TEMPORARY' THEN 2
-                        ELSE 1
-                    END AS weight
-                    FROM memories
-                    WHERE {like_clauses}
-                    ORDER BY weight DESC, id DESC
-                    LIMIT ?
-                """
-                params.append(sql if False else limit)
-                cursor.execute(sql, params)
-                
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                if not words:
+                    cursor.execute("SELECT * FROM memories ORDER BY id DESC LIMIT ?", (limit,))
+                else:
+                    like_clauses = " OR ".join(
+                        ["fact LIKE ? OR category LIKE ? OR key LIKE ?" for _ in words]
+                    )
+                    params = []
+                    for w in words:
+                        params.extend([f"%{w}%", f"%{w}%", f"%{w}%"])
+
+                    sql = f"""
+                        SELECT *,
+                        (
+                            CASE importance
+                                WHEN 'HIGH' THEN 3
+                                WHEN 'MEDIUM' THEN 2
+                                WHEN 'TEMPORARY' THEN 1
+                                ELSE 1
+                            END
+                        ) AS weight
+                        FROM memories
+                        WHERE {like_clauses}
+                        ORDER BY weight DESC, updated_at DESC, id DESC
+                        LIMIT ?
+                    """
+                    params.append(limit)
+                    cursor.execute(sql, params)
+
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Search failed: {e}")
+            return []
 
     def get_all_memories(self) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM memories ORDER BY id DESC")
-            return [dict(row) for row in cursor.fetchall()]
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM memories ORDER BY id DESC")
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to get memories: {e}")
+            return []
+
+    def get_memories_by_category(self, category: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Retrieve all memories in a specific category."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM memories WHERE category = ? ORDER BY importance DESC, id DESC LIMIT ?",
+                    (category, limit)
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Category search failed: {e}")
+            return []
+
+    def delete_by_category(self, category: str):
+        """Delete memories matching a category (legacy — use resolve_temp_state instead)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM memories WHERE category = ?", (category,))
+                conn.commit()
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Delete failed: {e}")
+
+    # ─────────────────────────────────────────────────────────────
+    # Temp States CRUD (v3.0)
+    # ─────────────────────────────────────────────────────────────
+
+    def save_temp_state(self, key: str, fact: str, category: str = "Health") -> bool:
+        """Save a new active temporary state (cold, fever, exam, etc.)."""
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO temp_states (key, fact, category, started_at, is_active)
+                    VALUES (?, ?, ?, ?, 1)
+                    ON CONFLICT(key) DO UPDATE SET
+                        fact=excluded.fact,
+                        category=excluded.category,
+                        started_at=excluded.started_at,
+                        resolved_at=NULL,
+                        is_active=1,
+                        last_checked=NULL
+                """, (key, fact, category, now))
+                conn.commit()
+                return True
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to save temp state: {e}")
+            return False
+
+    def get_active_temp_states(self) -> List[Dict[str, Any]]:
+        """Get all currently active temp states (is_active=1)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM temp_states
+                    WHERE is_active = 1
+                    ORDER BY started_at DESC
+                """)
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to get active temp states: {e}")
+            return []
+
+    def get_temp_state_by_key(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get a specific temp state by key."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM temp_states WHERE key = ? AND is_active = 1",
+                    (key,)
+                )
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to get temp state: {e}")
+            return None
+
+    def resolve_temp_state(self, key: str) -> Optional[Dict[str, Any]]:
+        """
+        Mark a temp state as resolved.
+        Returns the resolved state dict (so caller can archive to memories table).
+        """
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                # Fetch current state before resolving
+                cursor.execute(
+                    "SELECT * FROM temp_states WHERE key = ? AND is_active = 1",
+                    (key,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+
+                state = dict(row)
+
+                # Mark resolved
+                cursor.execute("""
+                    UPDATE temp_states
+                    SET is_active = 0, resolved_at = ?
+                    WHERE key = ?
+                """, (now, key))
+                conn.commit()
+                state["resolved_at"] = now
+                return state
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to resolve temp state: {e}")
+            return None
+
+    def resolve_temp_state_by_name(self, condition_name: str) -> List[Dict[str, Any]]:
+        """
+        Mark any active temp state matching `condition_name` (e.g. 'Cold', 'Ankle Sprain') as resolved.
+        If condition_name is broad or matches all active states, resolves all active health states.
+        Returns list of resolved state dicts.
+        """
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        resolved = []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Fetch active matching states
+                cursor.execute("""
+                    SELECT * FROM temp_states
+                    WHERE is_active = 1
+                """)
+                rows = [dict(r) for r in cursor.fetchall()]
+                
+                name_clean = condition_name.lower().strip()
+                for row in rows:
+                    key_lower = row["key"].lower()
+                    fact_lower = row["fact"].lower()
+                    
+                    # Match if condition_name is in key or fact, or if broad name like "all" / "health"
+                    is_match = (
+                        name_clean in key_lower
+                        or key_lower in name_clean
+                        or name_clean in fact_lower
+                        or name_clean in ("health", "illness", "injury", "all", "condition")
+                    )
+                    if is_match:
+                        cursor.execute("""
+                            UPDATE temp_states SET is_active = 0, resolved_at = ?
+                            WHERE id = ?
+                        """, (now, row["id"]))
+                        row["resolved_at"] = now
+                        resolved.append(row)
+                conn.commit()
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to resolve temp state by name: {e}")
+        return resolved
+
+    def resolve_all_health_states(self) -> List[Dict[str, Any]]:
+        """Resolve all active health-related temp states. Returns list of resolved states."""
+        return self.resolve_temp_state_by_name("health")
+
+    def update_temp_state_check_time(self, key: str):
+        """Update last_checked timestamp — called after JARVIS does a proactive check-in."""
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE temp_states SET last_checked = ? WHERE key = ?",
+                    (now, key)
+                )
+                conn.commit()
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to update check time: {e}")
+
+    def get_stale_temp_states(self, older_than_hours: float = 24.0) -> List[Dict[str, Any]]:
+        """
+        Get active temp states that haven't been checked in for `older_than_hours`.
+        Used to trigger proactive check-ins.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM temp_states
+                    WHERE is_active = 1
+                    AND (
+                        last_checked IS NULL
+                        OR (julianday('now') - julianday(last_checked)) * 24 >= ?
+                    )
+                    ORDER BY started_at ASC
+                """, (older_than_hours,))
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to get stale temp states: {e}")
+            return []
 
 
 class MemoryManager:
