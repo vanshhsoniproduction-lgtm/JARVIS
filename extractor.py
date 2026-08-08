@@ -24,7 +24,7 @@ OUTPUT ONLY VALID JSON with these exact keys:
 Rules:
 1. ONLY extract "new_condition" if the user explicitly states they HAVE or are SUFFERING FROM a new illness/injury.
 2. ONLY extract "resolved_condition" if the user states they are RECOVERED, CURED, or FINE NOW from an illness/injury.
-3. ONLY extract "permanent_fact" for durable user facts explicitly declared by the user (e.g., "I own a red Tesla", "I live in Jaipur", "My name is Vansh"). Do NOT extract questions, requests, or meta-statements.
+3. ONLY extract "permanent_fact" for durable user facts explicitly declared by the user (e.g., "I own a red Tesla", "I live in Amritsar", "My name is Vansh"). Do NOT extract questions, requests, or meta-statements.
 4. Set "needs_weather" to TRUE for ANY query touching location, sky, rain, weather, temperature, humidity, or hourly forecast (e.g. "where am I", "will it rain at 3 PM", "rainfall chances", "is it humid").
 5. Set "needs_memory" to TRUE for questions about what you know about Vansh or stored personal memories.
 6. Output NOTHING except valid JSON.
@@ -72,18 +72,28 @@ class LLMExtractor:
         lower_text = text.lower()
         has_weather_intent = bool(re.search(
             r"\b(weather|sky|rain|rainfall|rainy|cloud|temp|temperature|humidity|forecast|climate|"
-            r"where am i|where i am|my location|current location|city|jaipur|mumbai|delhi|bangalore)\b",
+            r"location|live location|where am i|where i am|my location|current location|city|amritsar|mumbai|delhi|bangalore|jaipur)\b",
             lower_text
         ))
         has_memory_intent = bool(re.search(
-            r"\b(what (do )?you know|about me|who am i|my name|my car|my age|stored|memory|remember|details)\b",
+            r"\b(what (do )?you know|about me|who am i|my name|my car|my age|hometown|home town|medical|history|histry|illness|cold|health|stored|memory|remember|details)\b",
             lower_text
         ))
 
-        prompt = EXTRACTION_SYSTEM_PROMPT.replace("{USER_INPUT}", text)
+        # Fast-path: Skip slow LLM completion for casual queries (speeds up streaming response by 3 seconds)
+        has_state_declaration = bool(re.search(
+            r"\b(have a|having a|suffering|recovered|cured|cold|fever|illness|bimaar|theek ho|save this|remember that|my name is|i own|i live)\b",
+            lower_text
+        ))
+
+        if not has_state_declaration:
+            default_res["needs_weather"] = has_weather_intent
+            default_res["needs_memory"] = has_memory_intent
+            return default_res
 
         try:
             start_t = time.time()
+            prompt = EXTRACTION_SYSTEM_PROMPT.replace("{USER_INPUT}", text)
             res = self.llm.create_completion(
                 prompt=prompt,
                 max_tokens=90,

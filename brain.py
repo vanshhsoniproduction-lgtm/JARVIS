@@ -93,8 +93,19 @@ class JarvisBrain:
         self.history: List[Dict[str, str]] = []
         self._turn_count: int = 0
         self._last_checkin_turn: int = -PROACTIVE_CHECK_IN_COOLDOWN_TURNS  # Allow first turn check-in
+        self.stop_requested: bool = False
 
         print(f"{COLOR_INFO}[JARVIS Engine v4.0] Autonomous Dynamic AI System initialized!{COLOR_RESET}\n")
+
+    def stop_generation(self):
+        """Immediately interrupt current LLM generation stream and stop TTS audio playback."""
+        self.stop_requested = True
+        if self.voice:
+            self.voice.stop()
+        try:
+            self.llm.reset()
+        except Exception:
+            pass
 
     def _trim_history(self):
         """Keep only the last MAX_HISTORY_TURNS turns in memory to prevent RAM bloat."""
@@ -118,6 +129,7 @@ class JarvisBrain:
         # 2. Inject personal memories for personal/memory queries
         is_personal_query = bool(re.search(
             r"\b(about me|who am i|who i am|my name|my age|my birthday|my health|my details|"
+            r"hometown|home town|native|city|medical|history|histry|illness|cold|past health|"
             r"do you remember|what do you know about me|remember me|"
             r"mera naam|mere baare|meri details|kya pata hai)\b",
             user_input, re.IGNORECASE
@@ -176,6 +188,11 @@ class JarvisBrain:
         Yields ('done', final_response) when complete.
         """
         self._turn_count += 1
+        self.stop_requested = False
+        try:
+            self.llm.reset()
+        except Exception:
+            pass
 
         # ── 0. Proactive Check-In (before routing) ───────────────────────────
         proactive_question = self._check_proactive_temp_state()
@@ -242,10 +259,25 @@ class JarvisBrain:
         # ── 7. Tool Execution: Weather & Live Telemetry ───────────────────────
         needs_wx = should_fetch_weather or updates.get("needs_weather")
         if needs_wx:
-            city = extract_city(user_input, DEFAULT_CITY)
-            wx_data = fetch_weather(city)
+            gps_match = re.search(r"LIVE GPS:\s*lat\s*([\d.-]+),\s*lon\s*([\d.-]+)", user_input, re.IGNORECASE)
+            if gps_match:
+                lat_val = float(gps_match.group(1))
+                lon_val = float(gps_match.group(2))
+                wx_data = fetch_weather(lat=lat_val, lon=lon_val)
+            else:
+                city = extract_city(user_input, default_city=None)
+                wx_data = fetch_weather(city=city)
+
             if wx_data:
-                turn_messages.append({"role": "system", "content": f"{wx_data}\n[CRITICAL OVERRIDE]: Live telemetry ALWAYS overrides any city or location mentioned in past conversation history or memories. State the exact city and weather from [LIVE DATA]."})
+                turn_messages.append({
+                    "role": "system",
+                    "content": (
+                        f"{wx_data}\n"
+                        f"[CRITICAL OVERRIDE]: Live telemetry ALWAYS overrides any city or location mentioned in past conversation history or memories. "
+                        f"State the exact city and weather from [LIVE DATA] directly to Vansh. "
+                        f"Do NOT ask permission to access location, internet, or telemetry — you ALREADY have active real-time live telemetry."
+                    )
+                })
 
         # ── 7b. Multi-Context Tool Execution: Memory ─────────────────────────
         needs_mem = updates.get("needs_memory")
@@ -275,82 +307,102 @@ class JarvisBrain:
         start_time = time.time()
 
         # ── 11. LLM Inference — Streaming ─────────────────────────────────────
-        response = self.llm.create_chat_completion(
-            messages=turn_messages,
-            temperature=temperature,
-            top_p=DEFAULT_TOP_P,
-            repeat_penalty=DEFAULT_REPEAT_PENALTY,
-            frequency_penalty=DEFAULT_FREQUENCY_PENALTY,
-            presence_penalty=DEFAULT_PRESENCE_PENALTY,
-            max_tokens=max_tokens,
-            stream=True,
-        )
+        try:
+            response = self.llm.create_chat_completion(
+                messages=turn_messages,
+                temperature=temperature,
+                top_p=DEFAULT_TOP_P,
+                repeat_penalty=DEFAULT_REPEAT_PENALTY,
+                frequency_penalty=DEFAULT_FREQUENCY_PENALTY,
+                presence_penalty=DEFAULT_PRESENCE_PENALTY,
+                max_tokens=max_tokens,
+                stream=True,
+            )
 
-        full_text = ""
-        sentence_buffer = ""
-        in_think = False
-        printed_jarvis_label = False
-        printed_think_label = False
+            full_text = ""
+            sentence_buffer = ""
+            in_think = False
+            printed_jarvis_label = False
+            printed_think_label = False
 
-        for chunk in response:
-            delta = chunk["choices"][0]["delta"]
-            content = delta.get("content")
-            if not content:
-                continue
-            full_text += content
+            for chunk in response:
+                if self.stop_requested:
+                    print(f"\n{COLOR_INFO}[JARVIS GENERATION INTERRUPTED BY USER]{COLOR_RESET}")
+                    self.voice.stop()
+                    try:
+                        self.llm.reset()
+                    except Exception:
+                        pass
+                    yield ("done", strip_canned_suffixes(full_text))
+                    return
 
-            # Think mode handling
-            if "<think>" in content or ("<think>" in full_text and not in_think and "</think>" not in full_text):
-                if not in_think:
-                    in_think = True
-                    if not printed_think_label and deep:
-                        print(f"\n{COLOR_THINK_LABEL}🧠 [JARVIS Thinking...]{COLOR_RESET}\n{COLOR_THINK_TEXT}", end="", flush=True)
-                        printed_think_label = True
-                    content = content.replace("<think>", "")
+                delta = chunk["choices"][0]["delta"]
+                content = delta.get("content")
+                if not content:
+                    continue
+                full_text += content
 
-            if "</think>" in content:
-                before, _, after = content.partition("</think>")
-                if before and deep:
-                    print(before, end="", flush=True)
-                if deep:
-                    print(f"{COLOR_RESET}\n")
-                in_think = False
-                if after:
+                # Think mode handling
+                if "<think>" in content or ("<think>" in full_text and not in_think and "</think>" not in full_text):
+                    if not in_think:
+                        in_think = True
+                        if not printed_think_label and deep:
+                            print(f"\n{COLOR_THINK_LABEL}🧠 [JARVIS Thinking...]{COLOR_RESET}\n{COLOR_THINK_TEXT}", end="", flush=True)
+                            printed_think_label = True
+                        content = content.replace("<think>", "")
+
+                if "</think>" in content:
+                    before, _, after = content.partition("</think>")
+                    if before and deep:
+                        print(before, end="", flush=True)
+                    if deep:
+                        print(f"{COLOR_RESET}\n")
+                    in_think = False
+                    if after:
+                        if not printed_jarvis_label:
+                            print(f"{COLOR_JARVIS}JARVIS:{COLOR_RESET} ", end="", flush=True)
+                            printed_jarvis_label = True
+                        print(after, end="", flush=True)
+                        sentence_buffer += after
+                        yield ("token", after)
+                    continue
+
+                if in_think:
+                    if deep:
+                        print(content, end="", flush=True)
+                else:
                     if not printed_jarvis_label:
                         print(f"{COLOR_JARVIS}JARVIS:{COLOR_RESET} ", end="", flush=True)
                         printed_jarvis_label = True
-                    print(after, end="", flush=True)
-                    sentence_buffer += after
-                    yield ("token", after)
-                continue
-
-            if in_think:
-                if deep:
                     print(content, end="", flush=True)
-            else:
-                if not printed_jarvis_label:
-                    print(f"{COLOR_JARVIS}JARVIS:{COLOR_RESET} ", end="", flush=True)
-                    printed_jarvis_label = True
-                print(content, end="", flush=True)
 
-                # Yield token directly to stream for real-time UI display!
-                yield ("token", content)
+                    # Yield token directly to stream for real-time UI display!
+                    yield ("token", content)
 
-                if TTS_SENTENCE_STREAMING:
-                    sentence_buffer += content
-                    sentences = SENTENCE_SPLIT_RE.split(sentence_buffer)
-                    if len(sentences) > 1:
-                        for sent in sentences[:-1]:
-                            s_clean = sent.strip()
-                            if s_clean:
-                                self.voice.speak_sentence(s_clean)
-                        sentence_buffer = sentences[-1]
+                    if TTS_SENTENCE_STREAMING:
+                        sentence_buffer += content
+                        sentences = SENTENCE_SPLIT_RE.split(sentence_buffer)
+                        if len(sentences) > 1:
+                            for sent in sentences[:-1]:
+                                s_clean = sent.strip()
+                                if s_clean:
+                                    self.voice.speak_sentence(s_clean)
+                            sentence_buffer = sentences[-1]
 
-        elapsed = time.time() - start_time
-        print(f"{COLOR_RESET}\n{COLOR_INFO}[{elapsed:.1f}s | Intent: {intent}]{COLOR_RESET}\n")
+            elapsed = time.time() - start_time
+            print(f"{COLOR_RESET}\n{COLOR_INFO}[{elapsed:.1f}s | Intent: {intent}]{COLOR_RESET}\n")
 
-        if TTS_SENTENCE_STREAMING and sentence_buffer.strip():
-            self.voice.speak_sentence(sentence_buffer.strip())
+            if TTS_SENTENCE_STREAMING and sentence_buffer.strip():
+                self.voice.speak_sentence(sentence_buffer.strip())
+        except Exception as llm_err:
+            print(f"\n{COLOR_INFO}[LLM INFERENCE ERROR] {llm_err}{COLOR_RESET}")
+            try:
+                self.llm.reset()
+            except Exception:
+                pass
+            fallback_resp = "Yes Vansh, how can I help?"
+            yield ("done", fallback_resp)
+            return
 
         # ── 12. Clean Response for History & Completion ───────────────────────
         raw_clean = full_text.split("</think>")[-1].strip() if "</think>" in full_text else full_text.strip()

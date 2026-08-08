@@ -142,27 +142,42 @@ class VoiceEngine:
             start_t = time.time()
             segments, _ = self.stt_model.transcribe(
                 audio_data,
-                beam_size=5,
-                best_of=5,
+                beam_size=1,
+                best_of=1,
                 task="transcribe",
                 language="en",
                 condition_on_previous_text=False,
                 vad_filter=True,
                 initial_prompt=(
                     "Transcribe spoken English clearly and accurately for JARVIS AI assistant. "
-                    "Keywords: JARVIS, Vansh, project, AI, voice, memory, health, weather, Jaipur, JDM, rims, wheels, alloys, car, mods, tuning, engine, specs, fitment, aftermarket, Mac, 13 inch, conversion."
+                    "Keywords: JARVIS, Vansh, project, AI, voice, memory, health, weather, Amritsar, JDM, rims, wheels, alloys, car, mods, tuning, engine, specs, fitment, aftermarket, Mac, 13 inch, conversion."
                 ),
             )
             transcribed_text = " ".join([seg.text.strip() for seg in segments if seg.text.strip()])
             elapsed = time.time() - start_t
 
             if transcribed_text:
-                print(f"{COLOR_VOICE}🗣️  You (Voice): \"{transcribed_text}\" [{elapsed:.2f}s]{COLOR_RESET}")
+                print(f"{COLOR_VOICE}[VOICE STT] You (Voice): \"{transcribed_text}\" [{elapsed:.2f}s]{COLOR_RESET}")
                 return transcribed_text
             return None
         except Exception as e:
             print(f"{COLOR_INFO}[VOICE] Mic recording error: {e}{COLOR_RESET}")
             return None
+
+    def stop(self):
+        """Instantly stop active TTS audio playback and clear queued speech sentences."""
+        try:
+            with self._tts_queue.mutex:
+                self._tts_queue.queue.clear()
+        except Exception:
+            pass
+        if hasattr(self, '_current_proc') and self._current_proc:
+            try:
+                self._current_proc.terminate()
+                self._current_proc.kill()
+            except Exception:
+                pass
+            self._current_proc = None
 
     def speak_sentence(self, text: str):
         """Stream a single sentence via async TTS queue without blocking stream."""
@@ -191,17 +206,24 @@ class VoiceEngine:
                     self.tts_model.tts_to_file(text=clean_text, file_path=tmp_wav)
 
                 import subprocess
-                subprocess.run(["afplay", tmp_wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                os.remove(tmp_wav)
+                self._current_proc = subprocess.Popen(["afplay", tmp_wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self._current_proc.wait()
+                self._current_proc = None
+                try:
+                    os.remove(tmp_wav)
+                except Exception:
+                    pass
                 return
             except Exception as e:
                 print(f"{COLOR_INFO}[TTS ERROR] Fallback to say: {e}{COLOR_RESET}")
 
         try:
             import subprocess
-            subprocess.run(["say", "-v", "Daniel", clean_text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._current_proc = subprocess.Popen(["say", "-v", "Daniel", clean_text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._current_proc.wait()
+            self._current_proc = None
         except Exception:
-            pass
+            self._current_proc = None
 
 
 def test_voice():

@@ -541,15 +541,23 @@ class MemoryEngine:
         ))
 
         is_health_query = bool(re.search(
-            r"\b(health|illness|sick|sickness|disease|condition|conditions|medical|history|past|recovered|cured|fever|cold)\b",
+            r"\b(health|illness|sick|sickness|disease|condition|conditions|medical|history|histry|past|recovered|cured|fever|cold|record|records)\b",
             query, re.IGNORECASE
         ))
 
         all_mems = self.db.get_all_memories()
 
-        # If it's a health query, prioritize Health and HealthHistory category memories!
+        # If it's a health query, prioritize Health and HealthHistory category memories + active/resolved temp states!
         if is_health_query:
-            health_mems = [m["fact"] for m in all_mems if m.get("category") in ("Health", "HealthHistory")]
+            health_mems = [m["fact"] for m in all_mems if m.get("category") in ("Health", "HealthHistory") or any(k in m["fact"].lower() for k in ("cold", "fever", "illness", "sick", "recovered", "health", "medical"))]
+            
+            # Also fetch active temp states
+            active_ts = self.db.get_active_temp_states()
+            for ts in active_ts:
+                fact_str = f"Active condition: {ts.get('fact')}"
+                if fact_str not in health_mems:
+                    health_mems.append(fact_str)
+
             if health_mems:
                 return health_mems[:limit]
 

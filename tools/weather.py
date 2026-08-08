@@ -51,11 +51,11 @@ def get_user_ip_geo() -> Dict[str, Any]:
             res = requests.get("http://ip-api.com/json/", timeout=3).json()
             if res.get("status") == "success":
                 geo_info = {
-                    "city": res.get("city", "Jaipur"),
-                    "region": res.get("regionName", "Rajasthan"),
+                    "city": res.get("city", "Amritsar"),
+                    "region": res.get("regionName", "Punjab"),
                     "country": res.get("country", "India"),
-                    "lat": res.get("lat", 26.9196),
-                    "lon": res.get("lon", 75.7878),
+                    "lat": res.get("lat", 31.6340),
+                    "lon": res.get("lon", 74.8723),
                 }
                 _CACHED_GEO = geo_info
                 _CACHED_GEO_TIME = now
@@ -64,11 +64,11 @@ def get_user_ip_geo() -> Dict[str, Any]:
             pass
 
     return {
-        "city": "Jaipur",
-        "region": "Rajasthan",
+        "city": "Amritsar",
+        "region": "Punjab",
         "country": "India",
-        "lat": 26.9196,
-        "lon": 75.7878,
+        "lat": 31.6340,
+        "lon": 74.8723,
     }
 
 
@@ -77,17 +77,44 @@ def get_auto_location() -> str:
     return get_user_ip_geo()["city"]
 
 
-def fetch_weather(city: Optional[str] = None) -> Optional[str]:
+def fetch_weather(city: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None) -> Optional[str]:
     if requests is None:
         return None
 
     geo_info = get_user_ip_geo()
     is_custom_city = False
 
-    if city and city.strip():
+    if lat is not None and lon is not None:
+        target_lat = lat
+        target_lon = lon
+        city_name = city
+        if not city_name:
+            try:
+                rev_res = requests.get(
+                    "https://api.bigdatacloud.net/data/reverse-geocode-client",
+                    params={"latitude": lat, "longitude": lon, "localityLanguage": "en"},
+                    timeout=3
+                ).json()
+                city_name = rev_res.get("city") or rev_res.get("locality") or rev_res.get("principalSubdivision") or geo_info["city"]
+                region_name = rev_res.get("principalSubdivision") or geo_info["region"]
+                location_label = f"Live GPS Location ({city_name}, {region_name})"
+            except Exception:
+                location_label = f"Live GPS Location ({geo_info['city']}, {geo_info['region']})"
+        else:
+            location_label = f"Live GPS Location ({city_name})"
+    elif city and city.strip():
         target_city = city.strip()
         if target_city.lower() != geo_info["city"].lower():
             is_custom_city = True
+            location_label = f"City of {target_city}"
+        else:
+            location_label = f"City of {geo_info['city']}, {geo_info['region']}"
+        target_lat = geo_info["lat"]
+        target_lon = geo_info["lon"]
+    else:
+        target_lat = geo_info["lat"]
+        target_lon = geo_info["lon"]
+        location_label = f"City of {geo_info['city']}, {geo_info['region']}"
 
     try:
         if is_custom_city:
@@ -97,17 +124,11 @@ def fetch_weather(city: Optional[str] = None) -> Optional[str]:
                 timeout=5,
             ).json()
             if geo_res.get("results"):
-                lat = geo_res["results"][0]["latitude"]
-                lon = geo_res["results"][0]["longitude"]
-                location_label = f"City of {target_city}"
-            else:
-                lat = geo_info["lat"]
-                lon = geo_info["lon"]
-                location_label = f"City of {geo_info['city']}, {geo_info['region']}, {geo_info['country']}"
-        else:
-            lat = geo_info["lat"]
-            lon = geo_info["lon"]
-            location_label = f"City of {geo_info['city']}, {geo_info['region']}, {geo_info['country']}"
+                target_lat = geo_res["results"][0]["latitude"]
+                target_lon = geo_res["results"][0]["longitude"]
+
+        lat = target_lat
+        lon = target_lon
 
         # Fetch current forecast + 12-hour hourly telemetry
         wx = requests.get(
@@ -178,9 +199,15 @@ def extract_city(user_input: str, default_city: Optional[str] = None) -> str:
     """Extract city name from user input, handling single-word cities, punctuation, and natural queries."""
     text = re.sub(r"[^\w\s]", "", user_input.strip())
 
-    match = re.search(r"\b(?:in|at|of)\s+([A-Za-z][A-Za-z\s]{1,25})$", text, re.IGNORECASE)
+    match = re.search(r"\b(?:in|at|of|for)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)", text, re.IGNORECASE)
     if match:
-        return match.group(1).strip()
+        extracted = match.group(1).strip()
+        words = extracted.split()
+        filtered = [w for w in words if w.lower() not in ("right", "now", "today", "tomorrow", "please", "current", "currently", "the")]
+        if filtered:
+            res = " ".join(filtered).title()
+            if res.lower() not in ("weather", "temp", "temperature", "sky", "cloud", "rain", "location", "city"):
+                return res
 
     words = text.split()
     if len(words) == 1 and len(words[0]) >= 3:

@@ -76,10 +76,11 @@ SYNONYMS = {
     "bf": ["boyfriend", "partner"],
     "friend": ["dost", "yaar", "buddy"],
     # Location
-    "live": ["city", "location", "address", "rehta", "stay", "home", "ghar"],
-    "city": ["live", "location", "jaipur", "delhi", "mumbai"],
-    "home": ["ghar", "house", "flat", "apartment"],
-    "ghar": ["home", "house", "flat"],
+    "live": ["city", "location", "address", "rehta", "stay", "home", "ghar", "hometown", "amritsar"],
+    "city": ["live", "location", "amritsar", "delhi", "mumbai", "hometown"],
+    "hometown": ["home", "town", "city", "amritsar", "native", "born", "live", "origin"],
+    "home": ["ghar", "house", "flat", "apartment", "hometown"],
+    "ghar": ["home", "house", "flat", "hometown"],
     # Education / Work
     "study": ["college", "university", "padhai", "education", "degree"],
     "college": ["study", "university", "institute", "education"],
@@ -95,10 +96,13 @@ SYNONYMS = {
     "birthday": ["born", "dob", "age", "year old"],
     "old": ["age", "year", "years"],
     # Health
-    "cold": ["zukam", "sardi", "nazla", "bimaar", "sick", "ill"],
-    "fever": ["bukhar", "temperature", "bimaar", "sick"],
+    "medical": ["health", "illness", "cold", "fever", "history", "histry", "sick", "doctor", "condition"],
+    "history": ["past", "medical", "health", "histry", "previous", "record", "illness"],
+    "histry": ["past", "medical", "health", "history", "previous", "record", "illness"],
+    "cold": ["zukam", "sardi", "nazla", "bimaar", "sick", "ill", "medical", "history"],
+    "fever": ["bukhar", "temperature", "bimaar", "sick", "medical", "history"],
     "headache": ["sar dard", "sir dard", "migraine"],
-    "sick": ["bimaar", "tabiyat", "cold", "fever", "ill"],
+    "sick": ["bimaar", "tabiyat", "cold", "fever", "ill", "medical"],
 }
 
 
@@ -160,6 +164,27 @@ class MemoryDatabase:
                 conn.commit()
         except sqlite3.DatabaseError as e:
             print(f"[JARVIS DB] Warning: Database initialization error: {e}")
+
+    def reset_database(self):
+        """Wipe database clean of all memories and temp states, then seed default hometown."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DROP TABLE IF EXISTS memories")
+                cursor.execute("DROP TABLE IF EXISTS temp_states")
+                conn.commit()
+            self._init_db()
+            now = time.strftime('%Y-%m-%d %H:%M:%S')
+            self.save_memory(
+                key="user_hometown",
+                fact="Vansh's registered hometown is Amritsar, Punjab.",
+                category="Location",
+                importance="HIGH",
+                source="system_seed"
+            )
+            print("[JARVIS DB] Database completely wiped and clean default seeded!")
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Reset database failed: {e}")
 
     # ─────────────────────────────────────────────────────────────
     # Permanent Memories CRUD

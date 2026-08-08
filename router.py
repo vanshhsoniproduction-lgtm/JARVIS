@@ -78,6 +78,8 @@ MEMORY_QUERY_PATTERNS = re.compile(
     r"what's my|whats my|who is my|what are my|"
     r"do i have|do i own|what did i tell you|"
     r"my health|health\s+conditions?|health\s+status|present\s+health|how\s+is\s+my\s+health|"
+    r"medical\s+histor[ya]|load\s+medical|health\s+histor[ya]|past\s+health|past\s+cold|past\s+illness|illness\s+histor[ya]|medical\s+records?|past\s+medical|"
+    r"hometown|home\s+town|native\s+place|my\s+hometown|where\s+am\s+i\s+from|where\s+is\s+vansh\s+from|my\s+city|"
     # Broad "about me" queries
     r"about me|mere baare|meko bata|mujhe bata|kya pata hai tujhe|"
     r"mera naam bata|naam bata|naam pata|kya yaad hai|"
@@ -133,7 +135,10 @@ WEATHER_PATTERNS = re.compile(
     r"weather|weahter|wheather|weathr|sky|sky\s+condition|condition\s+of\s+(?:the\s+)?sky|"
     r"temperature|temprature|temp|rain|rainy|barish|baarish|mausam|season|sunny|cloudy|"
     r"climate|garmi|sardi|dhoop|thand|thandak|forecast|precipitation|"
-    r"where\s+am\s+i|where\s+i\s+am|my\s+location|current\s+location|where\s+do\s+i\s+live|"
+    r"location|live\s+location|current\s+location|my\s+location|real\s+location|exact\s+location|"
+    r"where\s+am\s+i|where\s+i\s+am|where\s+do\s+i\s+live|where\s+am\s+i\s+rn|where\s+i\s+am\s+rn|"
+    r"fetch\s+(?:my\s+)?(?:live\s+)?location|check\s+(?:my\s+)?location|get\s+(?:my\s+)?location|"
+    r"tell\s+me\s+(?:my\s+)?(?:live\s+)?location|find\s+(?:my\s+)?location|track\s+(?:my\s+)?location|"
     r"check\s+weather|look\s+up\s+weather|check\s+sky|check|yes\s*,\?\s*do|yes\s+do"
     r")\b",
     re.IGNORECASE

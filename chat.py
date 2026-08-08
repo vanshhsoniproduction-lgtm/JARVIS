@@ -124,7 +124,7 @@ def fetch_weather(city: str) -> Optional[str]:
         return None
 
 
-def extract_city(user_input: str, default_city: str = "Jaipur") -> str:
+def extract_city(user_input: str, default_city: str = "Amritsar") -> str:
     match = re.search(r"\b(?:in|at)\s+([A-Za-z\s]+)$", user_input.strip(), re.IGNORECASE)
     if match:
         return match.group(1).strip()

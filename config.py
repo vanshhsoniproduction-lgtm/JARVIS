@@ -5,8 +5,8 @@
 N_THREADS = 6
 N_BATCH = 512
 
-# Default Location for Weather Tool
-DEFAULT_CITY = "Jaipur"
+# Default Location for Weather Tool (None = auto IP location)
+DEFAULT_CITY = None
 
 # Temperature Presets
 # Lower = more deterministic/factual, Higher = more creative

@@ -8,8 +8,9 @@ JARVIS v7.1 Local API Backend Server
 import json
 import os
 import sys
+import time
 import threading
-from bottle import Bottle, request, response, static_file
+from bottle import Bottle, request, response, static_file, ServerAdapter
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +18,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brain import JarvisBrain
 from tools.weather import get_user_ip_geo, fetch_weather
 from wake_word import WakeWordEngine, play_chime
+
+from socketserver import ThreadingMixIn
+from wsgiref.simple_server import WSGIServer, make_server
+
+class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
+    daemon_threads = True
+
+class ThreadedAdapter(ServerAdapter):
+    def run(self, handler):
+        server = make_server(self.host, self.port, handler, server_class=ThreadingWSGIServer)
+        server.serve_forever()
 
 app = Bottle()
 brain: JarvisBrain = None
@@ -27,6 +39,16 @@ wake_lock = threading.Lock()
 # Server-side busy lock — blocks wake triggers + poll responses during active turns
 is_server_busy = False
 busy_lock = threading.Lock()
+voice_busy_timer = None
+
+
+def _reset_voice_busy_lock():
+    global is_server_busy, voice_busy_timer
+    with busy_lock:
+        is_server_busy = False
+    if wake_engine:
+        wake_engine.resume()
+    voice_busy_timer = None
 
 
 def enable_cors():
@@ -60,9 +82,11 @@ def poll_wake():
 
     response.content_type = 'application/json'
 
-    # If server is busy processing a turn, always return false
+    # If server is busy processing a turn, clear stale trigger flags and return false
     with busy_lock:
         if is_server_busy:
+            with wake_lock:
+                wake_triggered_flag = False
             return json.dumps({"wake": False})
 
     with wake_lock:
@@ -96,12 +120,33 @@ def get_telemetry():
         })
     except Exception as e:
         response.content_type = 'application/json'
-        return json.dumps({"location": "Jaipur, Rajasthan", "health": "100% Healthy", "error": str(e)})
+        return json.dumps({"location": "Amritsar, Punjab", "health": "100% Healthy", "error": str(e)})
+
+
+@app.route('/api/stop', method=['POST', 'OPTIONS'])
+def handle_stop():
+    global is_server_busy, voice_busy_timer
+    if request.method == 'OPTIONS':
+        return {}
+
+    if voice_busy_timer:
+        voice_busy_timer.cancel()
+        voice_busy_timer = None
+
+    response.content_type = 'application/json'
+    if brain:
+        brain.stop_generation()
+    with busy_lock:
+        is_server_busy = False
+    if wake_engine:
+        wake_engine.resume()
+    print("\033[1;33m[SERVER API] Interrupted by user stop request!\033[0m")
+    return json.dumps({"status": "stopped"})
 
 
 @app.route('/api/chat_stream', method=['POST', 'OPTIONS'])
 def handle_chat_stream():
-    global is_server_busy
+    global is_server_busy, voice_busy_timer
     if request.method == 'OPTIONS':
         return {}
 
@@ -112,6 +157,15 @@ def handle_chat_stream():
         if not text:
             response.content_type = 'application/json'
             return json.dumps({"error": "Empty text query"})
+
+        if voice_busy_timer:
+            voice_busy_timer.cancel()
+            voice_busy_timer = None
+
+        # Auto-interrupt previous turn if active
+        if brain:
+            brain.stop_generation()
+            time.sleep(0.05)
 
         # Set server busy
         with busy_lock:
@@ -146,7 +200,7 @@ def handle_chat_stream():
 
 @app.route('/api/chat', method=['POST', 'OPTIONS'])
 def handle_chat():
-    global is_server_busy
+    global is_server_busy, voice_busy_timer
     if request.method == 'OPTIONS':
         return {}
 
@@ -157,6 +211,10 @@ def handle_chat():
         if not text:
             response.content_type = 'application/json'
             return json.dumps({"error": "Empty text query"})
+
+        if voice_busy_timer:
+            voice_busy_timer.cancel()
+            voice_busy_timer = None
 
         # Set server busy
         with busy_lock:
@@ -178,7 +236,6 @@ def handle_chat():
         response.content_type = 'application/json'
         return json.dumps({"error": str(e)})
     finally:
-        # Release busy lock and resume wake word
         with busy_lock:
             is_server_busy = False
         if wake_engine:
@@ -190,14 +247,18 @@ def handle_voice():
     """
     Phase 1 ONLY: Record mic audio + transcribe speech.
     Returns transcription immediately — does NOT run LLM.
-    UI will call /api/chat separately with the transcribed text.
+    UI will call /api/chat_stream separately with the transcribed text.
     """
-    global is_server_busy
+    global is_server_busy, voice_busy_timer
     if request.method == 'OPTIONS':
         return {}
 
-    transcript = None  # Initialize before try so finally can access it
+    transcript = None
     try:
+        if voice_busy_timer:
+            voice_busy_timer.cancel()
+            voice_busy_timer = None
+
         # Set server busy — blocks wake triggers during recording
         with busy_lock:
             is_server_busy = True
@@ -214,26 +275,29 @@ def handle_voice():
         if transcript and transcript.strip():
             print(f"\033[1;32m[SERVER TRANSCRIPTION COMPLETE]\033[0m \"{transcript}\"")
             response.content_type = 'application/json'
-            # Keep server busy — UI will call /api/chat next which releases the lock
+            
+            # Start watchdog timer: keep busy for max 6s so UI can fetch /api/chat_stream without wake word collision
+            voice_busy_timer = threading.Timer(6.0, _reset_voice_busy_lock)
+            voice_busy_timer.start()
+
             return json.dumps({
                 "status": "transcribed",
                 "user": transcript
             })
         else:
-            response.content_type = 'application/json'
-            return json.dumps({"status": "no_speech", "user": ""})
-    except Exception as e:
-        response.content_type = 'application/json'
-        return json.dumps({"status": "error", "error": str(e), "user": ""})
-    finally:
-        # If transcription failed or no speech, release lock immediately.
-        # If transcription succeeded, lock stays held until /api/chat completes.
-        has_valid_transcript = bool(transcript and transcript.strip())
-        if not has_valid_transcript:
             with busy_lock:
                 is_server_busy = False
             if wake_engine:
                 wake_engine.resume()
+            response.content_type = 'application/json'
+            return json.dumps({"status": "no_speech", "user": ""})
+    except Exception as e:
+        with busy_lock:
+            is_server_busy = False
+        if wake_engine:
+            wake_engine.resume()
+        response.content_type = 'application/json'
+        return json.dumps({"status": "error", "error": str(e), "user": ""})
 
 
 def kill_existing_port(port: int):
@@ -255,7 +319,6 @@ def run_server(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf", port: int = 876
     # Connect hands-free wake word callback
     def on_wake_triggered():
         global wake_triggered_flag
-        # Only set flag if server is NOT busy
         with busy_lock:
             if is_server_busy:
                 return  # Silently drop — server is processing a turn
@@ -267,7 +330,7 @@ def run_server(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf", port: int = 876
     wake_engine = WakeWordEngine(stt_model=brain.voice.stt_model, on_wake_callback=on_wake_triggered)
     wake_engine.start()
 
-    app.run(host='127.0.0.1', port=port, quiet=True)
+    app.run(host='127.0.0.1', port=port, quiet=True, server=ThreadedAdapter)
 
 
 if __name__ == '__main__':
