@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS Autonomous Visual HUD</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      background: rgba(10, 15, 29, 0.88);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      font-family: 'Outfit', -apple-system, sans-serif;
+      color: #e2e8f0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 20px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(56, 189, 248, 0.15);
+    }
+
+    /* Window Header / Drag Bar */
+    .drag-header {
+      -webkit-app-region: drag;
+      height: 38px;
+      background: rgba(15, 23, 42, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 1.5px;
+      color: #38bdf8;
+      text-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+    }
+
+    .brand-dot {
+      width: 8px;
+      height: 8px;
+      background: #00f2fe;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #00f2fe;
+    }
+
+    .header-actions {
+      -webkit-app-region: no-drag;
+      display: flex;
+      gap: 10px;
+    }
+
+    .control-btn {
+      background: none;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 14px;
+      transition: color 0.2s;
+    }
+
+    .control-btn:hover {
+      color: #38bdf8;
+    }
+
+    /* Main Grid Layout */
+    .hud-container {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 16px;
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    /* Left Control Sidebar */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Arc Reactor Visualizer Card */
+    .orb-card {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      border-radius: 16px;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .orb-wrapper {
+      position: relative;
+      width: 140px;
+      height: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Core Glow Rings */
+    .ring-outer {
+      position: absolute;
+      width: 130px;
+      height: 130px;
+      border: 2px dashed rgba(56, 189, 248, 0.4);
+      border-radius: 50%;
+      animation: rotateRing 20s linear infinite;
+    }
+
+    .ring-inner {
+      position: absolute;
+      width: 100px;
+      height: 100px;
+      border: 2px solid rgba(0, 242, 254, 0.6);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: rotateRingRev 10s linear infinite;
+    }
+
+    .arc-core {
+      width: 70px;
+      height: 70px;
+      background: radial-gradient(circle, #00f2fe 0%, #4facfe 60%, rgba(0,242,254,0.1) 100%);
+      border-radius: 50%;
+      box-shadow: 0 0 35px #00f2fe, 0 0 60px rgba(0, 242, 254, 0.5);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Dynamic Visual States */
+    .orb-card.idle .arc-core {
+      animation: idlePulse 3s ease-in-out infinite;
+    }
+
+    .orb-card.listening .arc-core {
+      background: radial-gradient(circle, #ff007f 0%, #7928ca 70%);
+      box-shadow: 0 0 45px #ff007f, 0 0 80px rgba(255, 0, 127, 0.6);
+      transform: scale(1.15);
+    }
+
+    .orb-card.thinking .ring-outer {
+      border-color: #f59e0b;
+      animation: rotateRing 2s linear infinite;
+    }
+
+    .orb-card.thinking .arc-core {
+      background: radial-gradient(circle, #fbbf24 0%, #d97706 70%);
+      box-shadow: 0 0 40px #fbbf24;
+      animation: thinkingSpin 1s linear infinite;
+    }
+
+    .orb-card.speaking .arc-core {
+      background: radial-gradient(circle, #10b981 0%, #059669 70%);
+      box-shadow: 0 0 45px #10b981, 0 0 75px rgba(16, 185, 129, 0.6);
+      animation: speakPulse 0.5s ease-in-out infinite alternate;
+    }
+
+    .status-label {
+      margin-top: 16px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      color: #38bdf8;
+      text-transform: uppercase;
+    }
+
+    .status-subtext {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 4px;
+    }
+
+    /* Telemetry HUD Cards */
+    .hud-card {
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hud-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: #64748b;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .hud-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f8fafc;
+
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Main Feed / Transcript Area */
+    .feed-container {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .feed-header {
+      padding: 12px 16px;
+      background: rgba(30, 41, 59, 0.4);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .feed-title {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #94a3b8;
+    }
+
+    .feed-messages {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    .message-sender {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .message-row.user .message-sender {
+      color: #38bdf8;
+    }
+
+    .message-row.jarvis .message-sender {
+      color: #00f2fe;
+    }
+
+    .message-bubble {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      padding: 10px 14px;
+      border-radius: 10px;
+      color: #e2e8f0;
+    }
+
+    .message-row.user .message-bubble {
+      background: rgba(56, 189, 248, 0.1);
+      border-color: rgba(56, 189, 248, 0.2);
+    }
+
+    /* Input Bar */
+    .input-bar-container {
+      padding: 12px 16px;
+      background: rgba(15, 23, 42, 0.8);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .text-input {
+      flex: 1;
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: #f8fafc;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .text-input:focus {
+      border-color: #38bdf8;
+    }
+
+    .action-btn {
+      background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+      border: none;
+      color: #0f172a;
+      font-weight: 700;
+      padding: 10px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.2s;
+    }
+
+    .action-btn:hover {
+      box-shadow: 0 0 15px rgba(0, 242, 254, 0.5);
+    }
+
+    .mic-btn {
+      background: rgba(255, 0, 127, 0.2);
+      border: 1px solid rgba(255, 0, 127, 0.4);
+      color: #ff007f;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .mic-btn:hover {
+      background: rgba(255, 0, 127, 0.4);
+      box-shadow: 0 0 15px rgba(255, 0, 127, 0.5);
+    }
+
+    /* Keyframe Animations */
+    @keyframes idlePulse {
+      0%, 100% { transform: scale(1); opacity: 0.85; }
+      50% { transform: scale(1.08); opacity: 1; box-shadow: 0 0 50px #00f2fe, 0 0 90px rgba(0, 242, 254, 0.7); }
+    }
+
+    @keyframes rotateRing {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    @keyframes rotateRingRev {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(-360deg); }
+    }
+
+    @keyframes speakPulse {
+      0% { transform: scale(1.05); }
+      100% { transform: scale(1.18); }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header Bar -->
+  <div class="drag-header">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <span>JARVIS v5.0 AUTONOMOUS HUD</span>
+    </div>
+    <div class="header-actions">
+      <button class="control-btn" id="btn-minimize" onclick="window.pywebview.api.minimize()">—</button>
+      <button class="control-btn" id="btn-close" onclick="window.pywebview.api.close_window()">✕</button>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <div class="hud-container">
+    <!-- Left Sidebar -->
+    <div class="sidebar">
+      <!-- Floating Orb Visualizer -->
+      <div class="orb-card idle" id="orb-card">
+        <div class="orb-wrapper">
+          <div class="ring-outer"></div>
+          <div class="ring-inner"></div>
+          <div class="arc-core"></div>
+        </div>
+        <div class="status-label" id="status-label">ALWAYS-ON STANDBY</div>
+        <div class="status-subtext" id="status-subtext">Say "Hey JARVIS" anytime</div>
+      </div>
+
+      <!-- Telemetry Cards -->
+      <div class="hud-card">
+        <div class="hud-title">Live Telemetry</div>
+        <div class="hud-value" id="hud-location">Jaipur, RJ (31.1°C)</div>
+      </div>
+
+      <div class="hud-card">
+        <div class="hud-title">Health Condition</div>
+        <div class="hud-value" id="hud-health">100% Healthy</div>
+      </div>
+
+      <div class="hud-card">
+        <div class="hud-title">Wake Word Status</div>
+        <div class="hud-value" id="hud-wakeword">Listening: "Hey JARVIS"</div>
+      </div>
+    </div>
+
+    <!-- Right Feed Panel -->
+    <div class="feed-container">
+      <div class="feed-header">
+        <div class="feed-title">REAL-TIME TRANSCRIPT FEED</div>
+        <div style="font-size:11px; color:#64748b;" id="system-time">--:-- --</div>
+      </div>
+
+      <div class="feed-messages" id="feed-messages">
+        <div class="message-row jarvis">
+          <div class="message-sender">JARVIS ENGINE v5.0</div>
+          <div class="message-bubble">
+            Good day Vansh. Systems online and continuous wake word detection ("Hey JARVIS") is active. How may I assist you today?
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Bar -->
+      <div class="input-bar-container">
+        <input type="text" class="text-input" id="user-input-field" placeholder="Type a command or speak 'Hey JARVIS'..." onkeydown="if(event.key==='Enter') sendTextMessage()">
+        <button class="action-btn" onclick="sendTextMessage()">SEND</button>
+        <button class="mic-btn" id="mic-trigger-btn" onclick="triggerVoiceInput()">🎙️ SPEAK</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // JS Bridge Functions connecting to Python Backend
+    function sendTextMessage() {
+      const input = document.getElementById('user-input-field');
+      const text = input.value.strip ? input.value.strip() : input.value.trim();
+      if (!text) return;
+
+      appendMessage('YOU', text, 'user');
+      input.value = '';
+
+      setVisualState('thinking', 'PROCESSING', 'Reasoning query...');
+      if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.process_text(text);
+      }
+    }
+
+    function triggerVoiceInput() {
+      setVisualState('listening', 'LISTENING...', 'Speak into mic');
+      if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.start_voice_input();
+      }
+    }
+
+    function appendMessage(sender, text, role) {
+      const container = document.getElementById('feed-messages');
+      const row = document.createElement('div');
+      row.className = `message-row ${role}`;
+      row.innerHTML = `
+        <div class="message-sender">${sender}</div>
+        <div class="message-bubble">${text}</div>
+      `;
+      container.appendChild(row);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function setVisualState(state, label, subtext) {
+      const orb = document.getElementById('orb-card');
+      orb.className = `orb-card ${state}`;
+      document.getElementById('status-label').innerText = label;
+      document.getElementById('status-subtext').innerText = subtext;
+    }
+
+    function updateTelemetry(location, health) {
+      if (location) document.getElementById('hud-location').innerText = location;
+      if (health) document.getElementById('hud-health').innerText = health;
+    }
+
+    // Update real-time clock
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('system-time').innerText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+  </script>
+</body>
+</html>

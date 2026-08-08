@@ -1,10 +1,10 @@
 """
-JARVIS Main CLI Application Entry Point — Dual Text & Offline Voice Mode
+JARVIS Main Application Entry Point — Autonomous Dual GUI & CLI Production Engine v5.0
 """
 
 import sys
 import os
-from brain import JarvisBrain, COLOR_INFO, COLOR_JARVIS, COLOR_USER, COLOR_RESET, COLOR_THINK_LABEL
+from brain import JarvisBrain, COLOR_INFO, COLOR_JARVIS, COLOR_USER, COLOR_RESET
 
 
 def find_gguf_models(directory: str = ".") -> list[str]:
@@ -17,7 +17,14 @@ def find_gguf_models(directory: str = ".") -> list[str]:
 
 
 def main():
-    model_path = sys.argv[1] if len(sys.argv) > 1 else None
+    use_gui = False
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a.lower() for a in sys.argv[1:] if a.startswith("--")]
+
+    if "--gui" in flags:
+        use_gui = True
+
+    model_path = args[0] if args else None
 
     if not model_path:
         found_models = find_gguf_models(".")
@@ -25,16 +32,21 @@ def main():
             model_path = found_models[0]
             print(f"{COLOR_INFO}[JARVIS] Auto-detected GGUF model: {model_path}{COLOR_RESET}")
         else:
-            print("[JARVIS] Usage: python main.py <path_to_gguf_model>")
+            print("[JARVIS] Usage: python main.py [--gui] <path_to_gguf_model>")
             print("Please pass the path to your downloaded .gguf file.")
             sys.exit(1)
+
+    if use_gui:
+        from ui.app import launch_gui
+        launch_gui(model_path=model_path)
+        return
 
     brain = JarvisBrain(model_path=model_path)
 
     print(f"{COLOR_INFO}===================================================================={COLOR_RESET}")
-    print(f"{COLOR_JARVIS}   JARVIS v2.0 Production Engine — Dual Text & Offline Voice Mode    {COLOR_RESET}")
+    print(f"{COLOR_JARVIS}   JARVIS v5.0 Autonomous Engine — Dual Text & Offline Voice Mode    {COLOR_RESET}")
     print(f"{COLOR_INFO}   - Type text directly OR type 'v' + Enter to speak into your mic   {COLOR_RESET}")
-    print(f"{COLOR_INFO}   - Type 'voice on' / 'voice off' to toggle voice output             {COLOR_RESET}")
+    print(f"{COLOR_INFO}   - Run 'python main.py --gui' to launch Always-On Visual HUD       {COLOR_RESET}")
     print(f"{COLOR_INFO}   - Type 'exit' or press Ctrl+C to stop                             {COLOR_RESET}")
     print(f"{COLOR_INFO}===================================================================={COLOR_RESET}\n")
 
@@ -45,14 +57,12 @@ def main():
             if not user_input:
                 continue
 
-            # Command: Voice input trigger ('v', 'speak', 'talk', 'mic')
             if user_input.lower() in ["v", "speak", "talk", "mic", "listen"]:
                 spoken_text = brain.voice.listen(max_duration_sec=8)
                 if spoken_text:
                     brain.process_turn(spoken_text)
                 continue
 
-            # Command: Toggle Voice Output
             if user_input.lower() == "voice off":
                 brain.voice.voice_enabled = False
                 print(f"{COLOR_INFO}[JARVIS] Voice output disabled.{COLOR_RESET}\n")
@@ -62,12 +72,10 @@ def main():
                 print(f"{COLOR_INFO}[JARVIS] Voice output enabled.{COLOR_RESET}\n")
                 continue
 
-            # Command: Exit
             if user_input.lower() in ["exit", "quit", "q"]:
                 print(f"\n{COLOR_INFO}[JARVIS] Shutting down session. Goodbye!{COLOR_RESET}")
                 break
 
-            # Regular text processing
             brain.process_turn(user_input)
 
         except (KeyboardInterrupt, EOFError):
