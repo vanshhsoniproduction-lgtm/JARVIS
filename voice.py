@@ -193,9 +193,12 @@ class VoiceEngine:
             except Exception as e:
                 print(f"{COLOR_INFO}[VOICE STT] Error loading Whisper: {e}{COLOR_RESET}")
 
-    def listen(self, max_duration_sec: int = 5, sample_rate: int = 16000) -> Optional[str]:
-        """Record mic audio with dynamic noise calibration & instant silence cutoff."""
-        if sd is None or np is None or not self.stt_model:
+    def listen(self, max_duration_sec: int = 8, sample_rate: int = 16000, partial_callback: Optional[Callable[[str], None]] = None) -> Optional[str]:
+        """
+        Record audio from mic with auto-silence detection and optional real-time partial_callback for live word-by-word streaming.
+        """
+        if sd is None or self.stt_model is None:
+            print(f"{COLOR_INFO}[VOICE STT] Error: sounddevice or faster-whisper not available.{COLOR_RESET}")
             return None
 
         print(f"\n{COLOR_VOICE}🎙️  [JARVIS Listening... Speak now]{COLOR_RESET}")
@@ -207,6 +210,7 @@ class VoiceEngine:
         recorded_chunks = []
         silent_chunks_count = 0
         speech_started = False
+        chunk_counter = 0
 
         try:
             with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
@@ -219,6 +223,7 @@ class VoiceEngine:
                     data, _ = stream.read(chunk_samples)
                     amp = float(np.max(np.abs(data)))
                     recorded_chunks.append(data)
+                    chunk_counter += 1
 
                     if amp > silence_threshold:
                         speech_started = True
@@ -230,6 +235,24 @@ class VoiceEngine:
                     else:
                         if len(recorded_chunks) * chunk_duration > 4.0:
                             break
+
+                    # Real-time partial transcription stream every ~0.36s
+                    if speech_started and partial_callback and chunk_counter % 6 == 0 and len(recorded_chunks) >= 8:
+                        try:
+                            partial_data = np.concatenate(recorded_chunks, axis=0).flatten()
+                            segs, _ = self.stt_model.transcribe(
+                                partial_data,
+                                beam_size=1,
+                                task="transcribe",
+                                language="en",
+                                vad_filter=False,
+                                initial_prompt="JARVIS, Vansh, project, AI, speech, voice, memory, health, weather."
+                            )
+                            partial_text = " ".join([s.text.strip() for s in segs if s.text.strip()])
+                            if partial_text:
+                                partial_callback(partial_text)
+                        except Exception:
+                            pass
 
             if not recorded_chunks or not speech_started:
                 print(f"{COLOR_INFO}[VOICE] No speech detected.{COLOR_RESET}")

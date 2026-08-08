@@ -1,147 +1,67 @@
 """
-JARVIS v5.0 Autonomous HUD Window & PyWebView Bridge
+JARVIS v6.2 Autonomous HUD Window & Launcher
+Launches local API server in background process and opens PyWebView GUI window as soon as server is ready.
 """
 
 import os
 import sys
-import threading
 import time
-from typing import Optional
+import socket
+import subprocess
 import webview
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from brain import JarvisBrain
-from tools.weather import get_user_ip_geo, fetch_weather
-from wake_word import WakeWordEngine
-
-
-class JarvisApi:
-    def __init__(self, window_ref, brain: JarvisBrain):
-        self.window = window_ref
-        self.brain = brain
-        self.wake_engine = WakeWordEngine(on_wake_callback=self.on_wake_word_triggered)
-        self.wake_engine.start()
-
-    def process_text(self, user_text: str):
-        """Handle text input from UI."""
-        def run():
-            try:
-                # Update UI to thinking state
-                self._eval_js("setVisualState('thinking', 'PROCESSING...', 'Reasoning query')")
-
-                # Run brain turn
-                response = self.brain.process_turn(user_text)
-
-                # Update UI to speaking state & append message
-                safe_resp = response.replace("'", "\\'").replace("\n", " ")
-                self._eval_js(f"appendMessage('JARVIS', '{safe_resp}', 'jarvis')")
-                self._eval_js("setVisualState('speaking', 'SPEAKING', 'Audio output active')")
-
-                # Speak response via TTS
-                self.brain.voice.speak(response)
-
-                # Return to idle
-                self._eval_js("setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say \"Hey JARVIS\" anytime')")
-
-                # Update HUD cards
-                self.refresh_telemetry()
-            except Exception as e:
-                print(f"[GUI ERROR] {e}")
-                self._eval_js("setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say \"Hey JARVIS\" anytime')")
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def start_voice_input(self):
-        """Handle manual mic click or wake word trigger."""
-        def run():
-            try:
-                self._eval_js("setVisualState('listening', 'LISTENING...', 'Speak into mic')")
-
-                # Listen via Whisper STT
-                transcript = self.brain.voice.listen(duration=5.0)
-
-                if transcript and transcript.strip():
-                    safe_trans = transcript.replace("'", "\\'").replace("\n", " ")
-                    self._eval_js(f"appendMessage('YOU', '{safe_trans}', 'user')")
-                    self.process_text(transcript)
-                else:
-                    self._eval_js("setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say \"Hey JARVIS\" anytime')")
-            except Exception as e:
-                print(f"[VOICE INPUT ERROR] {e}")
-                self._eval_js("setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say \"Hey JARVIS\" anytime')")
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def on_wake_word_triggered(self):
-        """Callback when wake word is heard in background."""
-        self.start_voice_input()
-
-    def refresh_telemetry(self):
-        """Refresh location & health cards in UI."""
+def wait_for_server(host: str = '127.0.0.1', port: int = 8765, timeout: float = 15.0) -> bool:
+    """Poll socket until backend server is up and listening on port."""
+    start = time.time()
+    while time.time() - start < timeout:
         try:
-            geo = get_user_ip_geo()
-            wx = fetch_weather(geo["city"])
-            temp_str = f"{geo['city']} ({geo['region']})"
-
-            # Get active health condition
-            active_health = "100% Healthy"
-            active_ctx = self.brain.memory.get_active_temp_context()
-            if "ACTIVE ILLNESS" in active_ctx:
-                active_health = active_ctx.split(":")[-1].strip()
-
-            safe_loc = temp_str.replace("'", "\\'")
-            safe_health = active_health.replace("'", "\\'")
-
-            self._eval_js(f"updateTelemetry('{safe_loc}', '{safe_health}')")
-        except Exception:
-            pass
-
-    def minimize(self):
-        if self.window:
-            self.window.minimize()
-
-    def close_window(self):
-        if self.window:
-            self.window.destroy()
-
-    def _eval_js(self, js_code: str):
-        if self.window:
-            try:
-                self.window.evaluate_js(js_code)
-            except Exception:
-                pass
+            with socket.create_connection((host, port), timeout=0.4):
+                return True
+        except OSError:
+            time.sleep(0.15)
+    return False
 
 
 def launch_gui(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf"):
-    """Initialize Jarvis Brain and launch PyWebView GUI."""
-    print("\033[1;36m[JARVIS v5.0 GUI] Initializing Autonomous Engine...\033[0m")
-    brain = JarvisBrain(model_path=model_path)
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    server_script = os.path.join(root_dir, "server.py")
 
-    html_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+    print("\033[1;36m[JARVIS v6.2 GUI] Starting background server process...\033[0m")
 
-    # Create PyWebView window
+    # Launch server in background process
+    server_process = subprocess.Popen(
+        [sys.executable, server_script, model_path],
+        cwd=root_dir
+    )
+
+    # Wait for server to bind to http://127.0.0.1:8765
+    server_ready = wait_for_server(port=8765, timeout=20.0)
+
+    if not server_ready:
+        print("\033[1;31m[JARVIS GUI ERROR] Server failed to start within timeout.\033[0m")
+        server_process.terminate()
+        return
+
+    print("\033[1;32m[JARVIS v6.2 GUI] Server Ready! Opening Autonomous Desktop HUD Window...\033[0m")
+
+    # Create PyWebView window pointing directly to http://127.0.0.1:8765
     window = webview.create_window(
-        title="JARVIS v5.0 AUTONOMOUS HUD",
-        url=html_file,
-        width=880,
-        height=620,
+        title="JARVIS v6.2 AUTONOMOUS HOLOGRAPHIC HUD",
+        url="http://127.0.0.1:8765",
+        width=960,
+        height=660,
         resizable=True,
         frameless=False,
         easy_drag=True,
-        background_color="#0a0f1d",
+        background_color="#060913",
     )
 
-    api = JarvisApi(window, brain)
-    window.js_api = api
-
-    # Initial telemetry update after window loads
-    def on_loaded():
-        time.sleep(1)
-        api.refresh_telemetry()
-
-    webview.start(on_loaded, debug=False)
+    try:
+        webview.start(debug=False)
+    finally:
+        print("\033[1;33m[JARVIS GUI] Shutting down backend server...\033[0m")
+        server_process.terminate()
 
 
 if __name__ == "__main__":
