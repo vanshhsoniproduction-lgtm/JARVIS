@@ -29,7 +29,7 @@ COLOR_RESET = "\033[0m"
 
 
 class VoiceEngine:
-    def __init__(self, model_size: str = "small", device: str = "cpu", compute_type: str = "int8"):
+    def __init__(self, model_size: str = "small", device: str = "cpu", compute_type: str = "int8", models_dir: Optional[str] = None):
         self.stt_model = None
         self.tts_model = None
         self.tts_speaker_wav = None
