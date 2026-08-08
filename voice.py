@@ -146,6 +146,10 @@ class VoiceEngine:
             print(f"{COLOR_INFO}[VOICE] Mic recording error: {e}{COLOR_RESET}")
             return None
 
+    def speak_sentence(self, text: str):
+        """Stream a single sentence via TTS (called by brain.py for sentence-streaming)."""
+        self.speak(text)
+
     def speak(self, text: str):
         """Synthesize TTS speech and play audio response."""
         if not text:

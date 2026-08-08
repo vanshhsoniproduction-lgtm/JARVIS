@@ -88,7 +88,7 @@ class JarvisBrain:
         )
 
         self.memory = MemoryEngine()
-        self.voice = VoiceEngine(models_dir=os.path.dirname(model_path))
+        self.voice = VoiceEngine()
         self.extractor = LLMExtractor(self.llm)
         self.history: List[Dict[str, str]] = []
         self._turn_count: int = 0

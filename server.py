@@ -1,7 +1,8 @@
 """
-JARVIS v7.0 Local API Backend Server
-Runs JarvisBrain & Metal GPU LLM inference in a dedicated background process.
-Original Full-Clip STT Recording Pipeline (99.9% Precision) + Sound Chimes + Mic Pause Lock.
+JARVIS v7.1 Local API Backend Server
+- Server-side busy lock prevents wake word triggers during active processing
+- Split /api/voice: records + transcribes only (no LLM) — UI calls /api/chat separately
+- Clean wake word integration with persistent mic stream
 """
 
 import json
@@ -22,6 +23,10 @@ brain: JarvisBrain = None
 wake_engine: WakeWordEngine = None
 wake_triggered_flag = False
 wake_lock = threading.Lock()
+
+# Server-side busy lock — blocks wake triggers + poll responses during active turns
+is_server_busy = False
+busy_lock = threading.Lock()
 
 
 def enable_cors():
@@ -54,6 +59,12 @@ def poll_wake():
         return {}
 
     response.content_type = 'application/json'
+
+    # If server is busy processing a turn, always return false
+    with busy_lock:
+        if is_server_busy:
+            return json.dumps({"wake": False})
+
     with wake_lock:
         is_triggered = wake_triggered_flag
         wake_triggered_flag = False
@@ -90,6 +101,7 @@ def get_telemetry():
 
 @app.route('/api/chat', method=['POST', 'OPTIONS'])
 def handle_chat():
+    global is_server_busy
     if request.method == 'OPTIONS':
         return {}
 
@@ -100,6 +112,12 @@ def handle_chat():
         if not text:
             response.content_type = 'application/json'
             return json.dumps({"error": "Empty text query"})
+
+        # Set server busy
+        with busy_lock:
+            is_server_busy = True
+        if wake_engine:
+            wake_engine.pause()
 
         print(f"\033[1;32m[SERVER CHAT RECV]\033[0m {text}")
         reply = brain.process_turn(text)
@@ -114,48 +132,63 @@ def handle_chat():
         print(f"[SERVER CHAT ERROR] {e}")
         response.content_type = 'application/json'
         return json.dumps({"error": str(e)})
+    finally:
+        # Release busy lock and resume wake word
+        with busy_lock:
+            is_server_busy = False
+        if wake_engine:
+            wake_engine.resume()
 
 
 @app.route('/api/voice', method=['POST', 'OPTIONS'])
 def handle_voice():
-    global wake_engine
+    """
+    Phase 1 ONLY: Record mic audio + transcribe speech.
+    Returns transcription immediately — does NOT run LLM.
+    UI will call /api/chat separately with the transcribed text.
+    """
+    global is_server_busy
     if request.method == 'OPTIONS':
         return {}
 
-    res_data = None
+    transcript = None  # Initialize before try so finally can access it
     try:
-        # Pause background wake word listener while active recording takes place
+        # Set server busy — blocks wake triggers during recording
+        with busy_lock:
+            is_server_busy = True
         if wake_engine:
             wake_engine.pause()
 
         play_chime("wake")
-        print("\033[1;35m[SERVER VOICE LISTEN]\033[0m Recording mic audio (Original Full-Clip Precision Mode)...")
+        print("\033[1;35m[SERVER VOICE LISTEN]\033[0m Recording mic audio (Full-Clip Precision Mode)...")
         transcript = brain.voice.listen(max_duration_sec=8)
 
-        # Play processing chime as soon as speech recording completes
+        # Play processing chime as soon as recording finishes
         play_chime("processing")
 
         if transcript and transcript.strip():
-            print(f"\033[1;32m[SERVER TRANSCRIPTION COMPLETE]\033[0m \"{transcript}\" — Processing LLM turn...")
-            reply = brain.process_turn(transcript)
+            print(f"\033[1;32m[SERVER TRANSCRIPTION COMPLETE]\033[0m \"{transcript}\"")
             response.content_type = 'application/json'
-            res_data = json.dumps({
-                "status": "success",
-                "user": transcript,
-                "response": reply
+            # Keep server busy — UI will call /api/chat next which releases the lock
+            return json.dumps({
+                "status": "transcribed",
+                "user": transcript
             })
         else:
             response.content_type = 'application/json'
-            res_data = json.dumps({"status": "no_speech", "user": "", "response": "No speech detected."})
+            return json.dumps({"status": "no_speech", "user": ""})
     except Exception as e:
         response.content_type = 'application/json'
-        res_data = json.dumps({"error": str(e)})
+        return json.dumps({"status": "error", "error": str(e), "user": ""})
     finally:
-        # Resume background wake word listener
-        if wake_engine:
-            wake_engine.resume()
-
-    return res_data
+        # If transcription failed or no speech, release lock immediately.
+        # If transcription succeeded, lock stays held until /api/chat completes.
+        has_valid_transcript = bool(transcript and transcript.strip())
+        if not has_valid_transcript:
+            with busy_lock:
+                is_server_busy = False
+            if wake_engine:
+                wake_engine.resume()
 
 
 def kill_existing_port(port: int):
@@ -177,6 +210,10 @@ def run_server(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf", port: int = 876
     # Connect hands-free wake word callback
     def on_wake_triggered():
         global wake_triggered_flag
+        # Only set flag if server is NOT busy
+        with busy_lock:
+            if is_server_busy:
+                return  # Silently drop — server is processing a turn
         print("\033[1;33m⚡ [HANDS-FREE WAKE] 'Hey JARVIS' trigger activated -> Signaling UI!\033[0m")
         play_chime("wake")
         with wake_lock:

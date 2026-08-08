@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS Autonomous Visual HUD v7.0</title>
+  <title>JARVIS Autonomous Visual HUD v7.1</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -81,6 +81,14 @@
       display: flex;
       align-items: center;
       gap: 12px;
+    }
+
+    .header-time {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 1px;
     }
 
     /* Dedicated Chat Convo Toggle Button (Top Right) */
@@ -452,6 +460,7 @@
     }
 
     .text-input:focus { border-color: var(--cyan-glow); box-shadow: 0 0 10px rgba(0, 242, 254, 0.3); }
+    .text-input:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .action-btn {
       background: linear-gradient(135deg, var(--cyan-glow) 0%, var(--blue-accent) 100%);
@@ -466,6 +475,7 @@
     }
 
     .action-btn:hover { box-shadow: 0 0 15px rgba(0, 242, 254, 0.6); }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .mic-btn {
       background: rgba(255, 0, 127, 0.2);
@@ -483,6 +493,14 @@
       box-shadow: 0 0 20px rgba(255, 0, 127, 0.6);
     }
 
+    .mic-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .mic-btn.recording {
+      background: rgba(255, 0, 127, 0.5);
+      box-shadow: 0 0 25px rgba(255, 0, 127, 0.7);
+      animation: micPulse 1s ease-in-out infinite;
+    }
+
     /* Keyframe Animations */
     @keyframes pulseDot { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
     @keyframes idlePulse {
@@ -492,7 +510,9 @@
     @keyframes rotateRing { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     @keyframes rotateRingRev { 0% { transform: rotate(0deg); } 100% { transform: rotate(-360deg); } }
     @keyframes speakPulse { 0% { transform: scale(1.05); } 100% { transform: scale(1.18); } }
+    @keyframes thinkingSpin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes micPulse { 0%, 100% { box-shadow: 0 0 15px rgba(255, 0, 127, 0.5); } 50% { box-shadow: 0 0 35px rgba(255, 0, 127, 0.9); } }
   </style>
 </head>
 <body>
@@ -500,9 +520,10 @@
   <div class="drag-header">
     <div class="brand">
       <div class="brand-dot"></div>
-      <span>JARVIS v7.0 AUTONOMOUS HOLOGRAPHIC HUD</span>
+      <span>JARVIS v7.1 AUTONOMOUS HOLOGRAPHIC HUD</span>
     </div>
     <div class="header-actions">
+      <span class="header-time" id="header-time"></span>
       <!-- Dedicated Chat Convo Toggle Button (Top Right) -->
       <button class="chat-toggle-btn" id="chat-toggle-btn" onclick="toggleChatDrawer()">
         <span>💬</span>
@@ -555,7 +576,7 @@
             <span class="info-title">Wake Word System</span>
             <span class="info-icon">⚡</span>
           </div>
-          <div class="info-value" id="hud-wakeword">Active: "Hey JARVIS"</div>
+          <div class="info-value" id="hud-wakeword">Active: "Hey JARVIS" (Persistent Mic)</div>
         </div>
       </div>
     </div>
@@ -584,7 +605,7 @@
         </div>
         <div class="feed-messages" id="feed-messages">
           <div class="message-row jarvis">
-            <div class="message-sender">JARVIS ENGINE v7.0</div>
+            <div class="message-sender">JARVIS ENGINE v7.1</div>
             <div class="message-bubble">
               Good day Vansh. 99.9% High-Accuracy Full-Clip STT is active. All turns are logged here for full chat history!
             </div>
@@ -595,7 +616,7 @@
       <!-- Bottom Control Bar -->
       <div class="input-bar-container">
         <input type="text" class="text-input" id="user-input-field" placeholder="Type a command or say 'Hey JARVIS'..." onkeydown="if(event.key==='Enter') sendTextMessage()">
-        <button class="action-btn" onclick="sendTextMessage()">SEND</button>
+        <button class="action-btn" id="send-btn" onclick="sendTextMessage()">SEND</button>
         <button class="mic-btn" id="mic-trigger-btn" onclick="triggerVoiceInput()">🎙️ SPEAK</button>
       </div>
     </div>
@@ -603,9 +624,54 @@
 
   <script>
     const API_BASE = "http://127.0.0.1:8765";
-    let isVoiceActive = false;
+
+    // ── State Machine ──────────────────────────────────────────────────
+    // States: idle | listening | processing | speaking
+    let currentState = 'idle';
     let isChatOpen = false;
 
+    function setState(newState) {
+      currentState = newState;
+      const micBtn = document.getElementById('mic-trigger-btn');
+      const sendBtn = document.getElementById('send-btn');
+      const inputField = document.getElementById('user-input-field');
+
+      switch (newState) {
+        case 'idle':
+          setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
+          micBtn.disabled = false;
+          micBtn.classList.remove('recording');
+          sendBtn.disabled = false;
+          inputField.disabled = false;
+          break;
+        case 'listening':
+          setVisualState('listening', 'LISTENING...', 'Recording mic audio');
+          micBtn.disabled = true;
+          micBtn.classList.add('recording');
+          sendBtn.disabled = true;
+          inputField.disabled = true;
+          document.getElementById('sent-text-display').innerText = '🎙️ Listening... Speak into mic';
+          document.getElementById('received-text-display').innerText = 'Waiting for speech...';
+          break;
+        case 'processing':
+          setVisualState('thinking', 'PROCESSING...', 'Running LLM inference');
+          micBtn.disabled = true;
+          micBtn.classList.remove('recording');
+          sendBtn.disabled = true;
+          inputField.disabled = true;
+          document.getElementById('received-text-display').innerText = '⚙️ Processing your request...';
+          break;
+        case 'speaking':
+          setVisualState('speaking', 'RESPONDING', 'Audio output active');
+          micBtn.disabled = true;
+          micBtn.classList.remove('recording');
+          sendBtn.disabled = true;
+          inputField.disabled = true;
+          break;
+      }
+    }
+
+    // ── Chat Drawer Toggle ─────────────────────────────────────────────
     function toggleChatDrawer() {
       const drawer = document.getElementById('chat-drawer');
       const btn = document.getElementById('chat-toggle-btn');
@@ -623,17 +689,17 @@
       }
     }
 
+    // ── Send Text Message (Text Input) ─────────────────────────────────
     async function sendTextMessage() {
+      if (currentState !== 'idle') return;
       const input = document.getElementById('user-input-field');
       const text = input.value.trim();
       if (!text) return;
 
+      input.value = '';
       appendMessage('YOU', text, 'user');
       document.getElementById('sent-text-display').innerText = `"${text}"`;
-      document.getElementById('received-text-display').innerText = 'Processing turn...';
-      input.value = '';
-
-      setVisualState('thinking', 'PROCESSING...', 'Reasoning query');
+      setState('processing');
 
       try {
         const res = await fetch(`${API_BASE}/api/chat`, {
@@ -645,58 +711,76 @@
         if (data.response) {
           appendMessage('JARVIS', data.response, 'jarvis');
           document.getElementById('received-text-display').innerText = data.response;
-          setVisualState('speaking', 'SPEAKING', 'Audio output active');
-          setTimeout(() => {
-            setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
-          }, 4500);
+          setState('speaking');
+          setTimeout(() => setState('idle'), 4000);
+        } else {
+          setState('idle');
         }
       } catch (err) {
-        setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
+        console.error('[CHAT ERROR]', err);
+        setState('idle');
       }
       refreshTelemetry();
     }
 
+    // ── Voice Input (Split: Phase 1 Record → Phase 2 LLM) ─────────────
     async function triggerVoiceInput() {
-      if (isVoiceActive) return;
-      isVoiceActive = true;
+      if (currentState !== 'idle') return;
 
-      setVisualState('listening', 'LISTENING...', 'Recording mic audio');
-      document.getElementById('sent-text-display').innerText = 'Listening... Speak into mic';
-      document.getElementById('received-text-display').innerText = 'Waiting for speech input...';
+      // Phase 1: Record + Transcribe
+      setState('listening');
 
+      let transcript = '';
       try {
         const res = await fetch(`${API_BASE}/api/voice`, { method: 'POST' });
         const data = await res.json();
 
-        if (data.user && data.user.trim()) {
-          appendMessage('YOU', data.user, 'user');
-          document.getElementById('sent-text-display').innerText = `"${data.user.trim()}"`;
-          document.getElementById('received-text-display').innerText = 'Transcribing & reasoning...';
-          setVisualState('thinking', 'PROCESSING...', 'Reasoning query');
-        }
-
-        if (data.response && data.status === 'success') {
-          appendMessage('JARVIS', data.response, 'jarvis');
-          document.getElementById('received-text-display').innerText = data.response;
-          setVisualState('speaking', 'SPEAKING', 'Audio output active');
-
-          setTimeout(() => {
-            setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
-            isVoiceActive = false;
-          }, 5000);
+        if (data.status === 'transcribed' && data.user && data.user.trim()) {
+          transcript = data.user.trim();
+          // Immediately show what the user said
+          document.getElementById('sent-text-display').innerText = `"${transcript}"`;
+          appendMessage('YOU', transcript, 'user');
         } else {
-          setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
-          isVoiceActive = false;
+          // No speech detected — go back to idle
+          document.getElementById('sent-text-display').innerText = 'No speech detected. Try again.';
+          setState('idle');
+          return;
         }
       } catch (err) {
-        setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
-        isVoiceActive = false;
+        console.error('[VOICE RECORD ERROR]', err);
+        setState('idle');
+        return;
+      }
+
+      // Phase 2: Send transcription to LLM via /api/chat
+      setState('processing');
+
+      try {
+        const res = await fetch(`${API_BASE}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: transcript })
+        });
+        const data = await res.json();
+
+        if (data.response) {
+          appendMessage('JARVIS', data.response, 'jarvis');
+          document.getElementById('received-text-display').innerText = data.response;
+          setState('speaking');
+          setTimeout(() => setState('idle'), 4000);
+        } else {
+          setState('idle');
+        }
+      } catch (err) {
+        console.error('[CHAT ERROR]', err);
+        setState('idle');
       }
       refreshTelemetry();
     }
 
+    // ── Wake Word Polling ──────────────────────────────────────────────
     async function checkWakeWord() {
-      if (isVoiceActive) return;
+      if (currentState !== 'idle') return;  // Only trigger when idle
       try {
         const res = await fetch(`${API_BASE}/api/poll_wake`);
         const data = await res.json();
@@ -706,6 +790,7 @@
       } catch (err) {}
     }
 
+    // ── Telemetry Refresh ──────────────────────────────────────────────
     async function refreshTelemetry() {
       try {
         const res = await fetch(`${API_BASE}/api/telemetry`);
@@ -715,6 +800,7 @@
       } catch (err) {}
     }
 
+    // ── Helpers ────────────────────────────────────────────────────────
     function appendMessage(sender, text, role) {
       const container = document.getElementById('feed-messages');
       const row = document.createElement('div');
@@ -734,15 +820,17 @@
       document.getElementById('status-subtext').innerText = subtext;
     }
 
-    function updateClock() {
+    function updateHeaderTime() {
       const now = new Date();
-      document.getElementById('system-time').innerText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const el = document.getElementById('header-time');
+      if (el) el.innerText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
-    setInterval(updateClock, 1000);
+    // ── Init ───────────────────────────────────────────────────────────
+    setInterval(updateHeaderTime, 1000);
     setInterval(refreshTelemetry, 10000);
-    setInterval(checkWakeWord, 500);
-    updateClock();
+    setInterval(checkWakeWord, 600);
+    updateHeaderTime();
     refreshTelemetry();
   </script>
 </body>

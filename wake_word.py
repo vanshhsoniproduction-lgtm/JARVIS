@@ -1,9 +1,11 @@
 """
-JARVIS Hands-Free Wake Word Detection Engine v5.3
-- Fast 1.0s audio window for instant 'Hey JARVIS' trigger detection
-- High-tech macOS sound chimes for instant auditory feedback
-- Safe mic pause/resume to prevent coreaudio crashes
-- 10s post-trigger cooldown to prevent re-triggering during turn execution
+JARVIS Hands-Free Wake Word Detection Engine v6.0
+- Persistent sd.InputStream — mic opens ONCE and stays open (no blinking)
+- Rolling audio buffer for 1.5s wake word detection window
+- Strict wake word matching: must be at START of transcription, max 6 words
+- Higher energy threshold to reject speaker bleed / ambient noise
+- Safe pause/resume without closing mic (prevents CoreAudio crashes)
+- Cooldown after each trigger to prevent re-triggering during turn execution
 """
 
 import os
@@ -14,6 +16,7 @@ import subprocess
 import re
 import numpy as np
 from typing import Callable, Optional
+from collections import deque
 
 try:
     import sounddevice as sd
@@ -37,6 +40,14 @@ def play_chime(chime_type: str = "wake"):
     threading.Thread(target=_play, daemon=True).start()
 
 
+# Strict wake word pattern: "jarvis" / "hey jarvis" / "hi jarvis" etc. at the START
+WAKE_PATTERN = re.compile(
+    r"^\s*(?:hey|hi|hello|yo|ok|okay)?\s*jarvis\b",
+    re.IGNORECASE
+)
+MAX_WAKE_WORDS = 6  # Real wake phrases are short — reject long sentences
+
+
 class WakeWordEngine:
     def __init__(self, stt_model=None, on_wake_callback: Optional[Callable[[], None]] = None):
         self.stt_model = stt_model
@@ -45,7 +56,17 @@ class WakeWordEngine:
         self.is_paused = False
         self.thread: Optional[threading.Thread] = None
         self.sample_rate = 16000
-        self.cooldown_until = 0
+        self.cooldown_until = 0.0
+
+        # Rolling buffer config: 1.5s window at 16kHz
+        self._window_sec = 1.5
+        self._window_samples = int(self._window_sec * self.sample_rate)
+        self._chunk_sec = 0.1  # Read 100ms chunks from persistent stream
+        self._chunk_samples = int(self._chunk_sec * self.sample_rate)
+        self._audio_ring: deque = deque(maxlen=int(self._window_samples / self._chunk_samples))
+
+        # Energy threshold — higher than before to reject speaker bleed
+        self._energy_threshold = 0.055
 
     def start(self):
         """Start background wake word listener thread."""
@@ -55,73 +76,104 @@ class WakeWordEngine:
         self.is_paused = False
         self.thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.thread.start()
-        print("\033[1;36m[WAKE WORD ENGINE] Active & Listening for 'Hey JARVIS' (Ultra-Fast 1.0s Mode)...\033[0m")
+        print("\033[1;36m[WAKE WORD ENGINE] Active & Listening for 'Hey JARVIS' (Persistent Mic Mode)...\033[0m")
 
     def stop(self):
         """Stop wake word listener thread."""
         self.is_running = False
 
     def pause(self):
-        """Temporarily pause mic sampling during STT recording to prevent mic lock."""
+        """Temporarily pause wake detection during active voice turn. Mic stream stays open."""
         self.is_paused = True
 
     def resume(self):
-        """Resume mic sampling after STT recording finishes."""
+        """Resume wake detection after voice turn completes."""
         self.is_paused = False
-        self.cooldown_until = time.time() + 3.0  # 3s cooldown on resume
+        self._audio_ring.clear()  # Flush stale audio
+        self.cooldown_until = time.time() + 4.0  # 4s cooldown on resume
 
     def _listen_loop(self):
-        """Background audio loop with 1.0s window for instant wake detection."""
-        if sd is None:
+        """
+        Persistent mic stream loop. The mic opens ONCE via sd.InputStream
+        and stays open for the lifetime of the engine. No blinking.
+        """
+        if sd is None or self.stt_model is None:
             return
 
-        chunk_sec = 1.0  # Ultra-fast 1.0s audio window
-        chunk_samples = int(self.sample_rate * chunk_sec)
+        try:
+            with sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype='float32',
+                blocksize=self._chunk_samples
+            ) as stream:
+                # Track when we last ran STT to avoid running it too frequently
+                last_stt_time = 0.0
+                stt_interval = 1.2  # Run STT at most every 1.2s
 
-        while self.is_running:
-            try:
-                if self.is_paused or time.time() < self.cooldown_until:
-                    time.sleep(0.3)
-                    continue
+                while self.is_running:
+                    try:
+                        # Always read from mic to keep the stream flowing (prevents buffer overflow)
+                        data, overflowed = stream.read(self._chunk_samples)
 
-                # Record 1.0-second continuous buffer
-                audio_buffer = sd.rec(
-                    chunk_samples,
-                    samplerate=self.sample_rate,
-                    channels=1,
-                    dtype='float32'
-                )
-                sd.wait()
+                        # If paused or in cooldown, just drain and skip processing
+                        if self.is_paused or time.time() < self.cooldown_until:
+                            time.sleep(0.05)
+                            continue
 
-                if not self.is_running or self.is_paused:
-                    continue
+                        # Add chunk to rolling ring buffer
+                        self._audio_ring.append(data.copy())
 
-                # Check energy level
-                amplitude = float(np.max(np.abs(audio_buffer)))
-                if amplitude < 0.035:
-                    continue  # Silence, skip STT pass
+                        # Only run STT every stt_interval seconds to save CPU
+                        now = time.time()
+                        if now - last_stt_time < stt_interval:
+                            continue
 
-                # Transcribe 1.0s chunk
-                if self.stt_model is not None:
-                    audio_flat = audio_buffer.flatten()
-                    segments, _ = self.stt_model.transcribe(
-                        audio_flat,
-                        beam_size=1,
-                        task="transcribe",
-                        language="en",
-                        vad_filter=True,
-                        initial_prompt="JARVIS, Hey JARVIS, Hi JARVIS"
-                    )
-                    text = " ".join([seg.text.strip().lower() for seg in segments if seg.text.strip()])
+                        # Check if we have enough audio in the ring buffer
+                        if len(self._audio_ring) < 10:  # Need at least 1.0s
+                            continue
 
-                    if re.search(r"\b(jarvis|hey jarvis|hi jarvis|hello jarvis|yo jarvis)\b", text):
-                        print(f"\033[1;33m⚡ [WAKE WORD DETECTED] Trigger phrase: \"{text}\"\033[0m")
-                        play_chime("wake")
-                        self.cooldown_until = time.time() + 10.0  # 10s cooldown while turn executes
-                        if self.on_wake_callback:
-                            self.on_wake_callback()
-            except Exception as e:
-                time.sleep(0.5)
+                        # Combine ring buffer into single array
+                        combined = np.concatenate(list(self._audio_ring), axis=0).flatten()
+
+                        # Check energy level — reject silence / low ambient noise
+                        amplitude = float(np.max(np.abs(combined)))
+                        if amplitude < self._energy_threshold:
+                            continue
+
+                        # Run STT on the rolling buffer
+                        last_stt_time = now
+                        segments, _ = self.stt_model.transcribe(
+                            combined,
+                            beam_size=1,
+                            task="transcribe",
+                            language="en",
+                            vad_filter=True,
+                            initial_prompt="JARVIS, Hey JARVIS, Hi JARVIS"
+                        )
+                        text = " ".join([seg.text.strip() for seg in segments if seg.text.strip()])
+
+                        if not text:
+                            continue
+
+                        # Strict validation: must start with wake phrase AND be short
+                        word_count = len(text.split())
+                        if word_count > MAX_WAKE_WORDS:
+                            continue  # Too long — this is normal speech, not a wake word
+
+                        if WAKE_PATTERN.search(text):
+                            print(f"\033[1;33m⚡ [WAKE WORD DETECTED] \"{text}\"\033[0m")
+                            play_chime("wake")
+                            self.cooldown_until = time.time() + 12.0  # 12s cooldown while turn executes
+                            self._audio_ring.clear()  # Flush buffer
+                            if self.on_wake_callback:
+                                self.on_wake_callback()
+
+                    except Exception:
+                        time.sleep(0.3)
+
+        except Exception as e:
+            print(f"\033[1;31m[WAKE WORD] Fatal stream error: {e}\033[0m")
 
 
 def test_wake_word():
