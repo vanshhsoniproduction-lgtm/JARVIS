@@ -35,8 +35,8 @@ def launch_gui(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf"):
         cwd=root_dir
     )
 
-    # Wait for server to bind to http://127.0.0.1:8765
-    server_ready = wait_for_server(port=8765, timeout=20.0)
+    # Wait for server to bind to http://127.0.0.1:8765 (45s max timeout)
+    server_ready = wait_for_server(port=8765, timeout=45.0)
 
     if not server_ready:
         print("\033[1;31m[JARVIS GUI ERROR] Server failed to start within timeout.\033[0m")

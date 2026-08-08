@@ -1,8 +1,8 @@
 """
-JARVIS Voice Engine v7.0 — High-Accuracy Original Full-Clip Pipeline (99.9% Precision)
+JARVIS Voice Engine v7.1 — High-Accuracy Original Full-Clip Pipeline (99.9% Precision)
 - Uninterrupted 100% clean mic recording with dynamic ambient noise calibration & auto silence cutoff
 - Ultra-precision Whisper STT (Beam Size = 5, best_of = 5)
-- XTTS-v2 Voice Cloning & macOS Native Speech Synthesis
+- Local Whisper-small model path resolution
 """
 
 import os
@@ -39,8 +39,12 @@ class VoiceEngine:
         self.tts_model = None
         self.tts_speaker_wav = None
 
-        m_dir = models_dir if models_dir else os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-        whisper_dir = os.path.join(m_dir, "whisper-small")
+        # Resolve local whisper-small directory robustly
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        whisper_dir = os.path.join(project_root, "models", "whisper-small")
+
+        if not os.path.exists(whisper_dir):
+            whisper_dir = os.path.join(os.getcwd(), "models", "whisper-small")
 
         if WhisperModel:
             try:
@@ -179,7 +183,7 @@ class VoiceEngine:
 
 def test_voice():
     v = VoiceEngine()
-    print("✓ Full-Clip 99.9% Precision VoiceEngine initialized!")
+    print("✓ Robust VoiceEngine initialized!")
 
 
 if __name__ == "__main__":
