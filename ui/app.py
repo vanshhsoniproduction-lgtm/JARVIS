@@ -58,7 +58,7 @@ def launch_gui(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf"):
     )
 
     try:
-        webview.start(debug=True)  # Debug ON: shows JS console errors in terminal
+        webview.start(debug=False)
     finally:
         print("\033[1;33m[JARVIS GUI] Shutting down backend server...\033[0m")
         server_process.terminate()

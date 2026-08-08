@@ -121,7 +121,6 @@ def handle_chat_stream():
 
         response.content_type = 'text/event-stream'
         response.headers['Cache-Control'] = 'no-cache'
-        response.headers['Connection'] = 'keep-alive'
 
         def generate():
             try:
@@ -129,9 +128,9 @@ def handle_chat_stream():
                 for chunk_type, content in brain.process_turn_stream(text):
                     payload = json.dumps({"type": chunk_type, "content": content})
                     yield f"data: {payload}\n\n"
-            except Exception as e:
-                print(f"[STREAM ERROR] {e}")
-                payload = json.dumps({"type": "error", "content": str(e)})
+            except Exception as stream_err:
+                print(f"[STREAM ERROR] {stream_err}")
+                payload = json.dumps({"type": "error", "content": str(stream_err)})
                 yield f"data: {payload}\n\n"
             finally:
                 with busy_lock:

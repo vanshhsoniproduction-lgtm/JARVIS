@@ -38,12 +38,12 @@ def play_chime(chime_type: str = "wake"):
     threading.Thread(target=_play, daemon=True).start()
 
 
-# Strict wake word: must START with "jarvis" or "hey/hi/hello jarvis"
+# Robust wake word pattern: catches "jarvis", "hey jarvis", "hi jarvis", "hello jarvis"
 WAKE_PATTERN = re.compile(
-    r"^\s*(?:hey|hi|hello|yo|ok|okay)?\s*jarvis\b",
+    r"\b(jarvis|hey jarvis|hi jarvis|hello jarvis|yo jarvis)\b",
     re.IGNORECASE
 )
-MAX_WAKE_WORDS = 6  # Reject long sentences — real wake phrases are short
+MAX_WAKE_WORDS = 8  # Accept short phrases containing wake word
 
 
 class WakeWordEngine:
@@ -56,10 +56,10 @@ class WakeWordEngine:
         self.sample_rate = 16000
         self.cooldown_until = 0.0
 
-        # Audio config
-        self._chunk_sec = 1.5   # 1.5s recording window for wake word detection
+        # Audio config — 1.2s window, 0.035 sensitive energy threshold
+        self._chunk_sec = 1.2
         self._chunk_samples = int(self._chunk_sec * self.sample_rate)
-        self._energy_threshold = 0.055  # Higher threshold to reject speaker bleed
+        self._energy_threshold = 0.035
 
     def start(self):
         """Start background wake word listener thread."""
@@ -67,11 +67,11 @@ class WakeWordEngine:
             return
         self.is_running = True
         self.is_paused = False
-        # 5-second startup cooldown — prevents triggering from boot noise
-        self.cooldown_until = time.time() + 5.0
+        # 1.0-second fast startup cooldown
+        self.cooldown_until = time.time() + 1.0
         self.thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.thread.start()
-        print("\033[1;36m[WAKE WORD ENGINE] Active & Listening for 'Hey JARVIS' (Session Mic Mode)...\033[0m")
+        print("\033[1;36m[WAKE WORD ENGINE] Active & Listening for 'Hey JARVIS' / 'JARVIS'...\033[0m")
 
     def stop(self):
         """Stop wake word listener thread."""

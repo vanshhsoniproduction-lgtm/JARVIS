@@ -853,10 +853,10 @@
     updateHeaderTime();
     refreshTelemetry();
 
-    // Delay wake word polling by 3 seconds to let UI fully render first
+    // Start wake word polling after 800ms UI render delay
     setTimeout(() => {
-      setInterval(checkWakeWord, 600);
-    }, 3000);
+      setInterval(checkWakeWord, 500);
+    }, 800);
   </script>
 </body>
 </html>
