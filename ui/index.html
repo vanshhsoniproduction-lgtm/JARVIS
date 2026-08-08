@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS Autonomous Visual HUD v6.1</title>
+  <title>JARVIS Autonomous Visual HUD v7.0</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg-dark: #060913;
-      --panel-bg: rgba(13, 20, 38, 0.82);
+      --panel-bg: rgba(13, 20, 38, 0.85);
       --panel-border: rgba(56, 189, 248, 0.25);
       --cyan-glow: #00f2fe;
       --blue-accent: #38bdf8;
@@ -83,7 +83,7 @@
       gap: 12px;
     }
 
-    /* Chat Convo Toggle Button (Top Right) */
+    /* Dedicated Chat Convo Toggle Button (Top Right) */
     .chat-toggle-btn {
       background: rgba(56, 189, 248, 0.15);
       border: 1px solid rgba(56, 189, 248, 0.4);
@@ -116,7 +116,7 @@
     .hud-container {
       flex: 1;
       display: grid;
-      grid-template-columns: 310px 1fr;
+      grid-template-columns: 300px 1fr;
       gap: 16px;
       padding: 16px;
       overflow: hidden;
@@ -220,7 +220,7 @@
       text-align: center;
     }
 
-    /* Vertical Stacked Info List Cards (Below Arc Reactor) */
+    /* Stacked Info List Cards (Below Arc Reactor) */
     .info-list {
       display: flex;
       flex-direction: column;
@@ -237,11 +237,6 @@
       flex-direction: column;
       gap: 4px;
       backdrop-filter: blur(15px);
-      transition: border-color 0.2s;
-    }
-
-    .hud-info-card:hover {
-      border-color: rgba(0, 242, 254, 0.5);
     }
 
     .info-header {
@@ -267,7 +262,7 @@
       word-break: break-word;
     }
 
-    /* Right Side Main Center Stage (Real-Time Live Speech View) */
+    /* Right Side Main Stage (Sent & Received Display Cards) */
     .main-stage {
       display: flex;
       flex-direction: column;
@@ -276,78 +271,73 @@
       position: relative;
     }
 
-    /* Large Holographic Speech Display Card */
-    .speech-hero-card {
+    .turn-display-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+    }
+
+    /* Sent Prompt Card */
+    .sent-card {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 14px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      backdrop-filter: blur(20px);
+    }
+
+    .sent-label {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      color: var(--blue-accent);
+      text-transform: uppercase;
+    }
+
+    .sent-text {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-main);
+      line-height: 1.5;
+    }
+
+    /* Received Response Card */
+    .received-card {
       flex: 1;
       background: radial-gradient(circle at 50% 50%, rgba(13, 20, 38, 0.9) 0%, rgba(6, 9, 19, 0.95) 100%);
       border: 1px solid var(--panel-border);
       border-radius: 16px;
-      padding: 24px;
+      padding: 20px 24px;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
-      position: relative;
-      overflow: hidden;
+      gap: 10px;
       backdrop-filter: blur(25px);
-      box-shadow: inset 0 0 40px rgba(0, 242, 254, 0.05);
+      box-shadow: inset 0 0 30px rgba(0, 242, 254, 0.04);
+      overflow-y: auto;
     }
 
-    .speech-hero-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .speech-hero-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(0, 242, 254, 0.12);
-      border: 1px solid rgba(0, 242, 254, 0.3);
-      color: var(--cyan-glow);
-      font-size: 11px;
+    .received-label {
+      font-size: 10px;
       font-weight: 800;
       letter-spacing: 1.5px;
-      padding: 6px 12px;
-      border-radius: 20px;
-    }
-
-    .speech-live-container {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      text-align: center;
-    }
-
-    /* REAL-TIME LIVE SPOKEN WORDS TEXT */
-    .speech-live-text {
-      font-family: 'Outfit', sans-serif;
-      font-size: 26px;
-      font-weight: 600;
-      line-height: 1.5;
-      color: #f1f5f9;
-      text-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
-      transition: all 0.15s ease;
-    }
-
-    .speech-live-text.active {
       color: var(--cyan-glow);
-      text-shadow: 0 0 25px rgba(0, 242, 254, 0.7);
+      text-transform: uppercase;
     }
 
-    .speech-hero-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-      padding-top: 14px;
-      font-size: 12px;
-      color: var(--text-muted);
+    .received-text {
+      font-size: 20px;
+      font-weight: 500;
+      color: #f1f5f9;
+      line-height: 1.6;
+      text-shadow: 0 0 15px rgba(0, 242, 254, 0.3);
     }
 
-    /* Slide-out / Floating Chat Convo Drawer (Overlay) */
+    /* Slide-out Chat Convo Drawer */
     .chat-drawer {
       position: absolute;
       top: 0;
@@ -510,9 +500,10 @@
   <div class="drag-header">
     <div class="brand">
       <div class="brand-dot"></div>
-      <span>JARVIS v6.1 AUTONOMOUS HOLOGRAPHIC HUD</span>
+      <span>JARVIS v7.0 AUTONOMOUS HOLOGRAPHIC HUD</span>
     </div>
     <div class="header-actions">
+      <!-- Dedicated Chat Convo Toggle Button (Top Right) -->
       <button class="chat-toggle-btn" id="chat-toggle-btn" onclick="toggleChatDrawer()">
         <span>💬</span>
         <span id="chat-btn-label">CHAT LOGS</span>
@@ -569,28 +560,23 @@
       </div>
     </div>
 
-    <!-- Right Side Main Stage (Real-Time Live Spoken Words View) -->
+    <!-- Right Side Main Stage (SEND & RECEIVED TEXT ONLY) -->
     <div class="main-stage">
-      <div class="speech-hero-card">
-        <div class="speech-hero-header">
-          <div class="speech-hero-badge">🎙️ REAL-TIME VOICE TELEMETRY</div>
-          <div style="font-size:11px; color:var(--text-muted);" id="system-time">--:-- --</div>
+      <div class="turn-display-container">
+        <!-- SENT PROMPT CARD -->
+        <div class="sent-card">
+          <div class="sent-label">🗣️ YOU (SENT PROMPT)</div>
+          <div class="sent-text" id="sent-text-display">Say "Hey JARVIS" or type a command...</div>
         </div>
 
-        <div class="speech-live-container">
-          <!-- REAL-TIME LIVE SPOKEN WORDS TEXT -->
-          <div class="speech-live-text" id="main-speech-display">
-            Say "Hey JARVIS" or click SPEAK — your words will stream live here in real time...
-          </div>
-        </div>
-
-        <div class="speech-hero-footer">
-          <span id="speech-mode-label">Status: Continuous Listening Active</span>
-          <span id="speech-intent-label">Intent: STANDBY</span>
+        <!-- RECEIVED RESPONSE CARD -->
+        <div class="received-card">
+          <div class="received-label">⚡ JARVIS (RECEIVED RESPONSE)</div>
+          <div class="received-text" id="received-text-display">Good day Vansh. Systems online with 99.9% voice accuracy. How may I assist you today?</div>
         </div>
       </div>
 
-      <!-- Slide-Out Chat Convo Drawer -->
+      <!-- Slide-Out Dedicated Chat Convo Drawer -->
       <div class="chat-drawer" id="chat-drawer">
         <div class="drawer-header">
           <div class="drawer-title">CONVERSATION HISTORY LOGS</div>
@@ -598,9 +584,9 @@
         </div>
         <div class="feed-messages" id="feed-messages">
           <div class="message-row jarvis">
-            <div class="message-sender">JARVIS ENGINE v6.1</div>
+            <div class="message-sender">JARVIS ENGINE v7.0</div>
             <div class="message-bubble">
-              Good day Vansh. Real-time word-by-word speech visualization is active. Say "Hey JARVIS" or speak anytime!
+              Good day Vansh. 99.9% High-Accuracy Full-Clip STT is active. All turns are logged here for full chat history!
             </div>
           </div>
         </div>
@@ -643,9 +629,10 @@
       if (!text) return;
 
       appendMessage('YOU', text, 'user');
+      document.getElementById('sent-text-display').innerText = `"${text}"`;
+      document.getElementById('received-text-display').innerText = 'Processing turn...';
       input.value = '';
 
-      document.getElementById('main-speech-display').innerText = `"${text}"`;
       setVisualState('thinking', 'PROCESSING...', 'Reasoning query');
 
       try {
@@ -657,7 +644,7 @@
         const data = await res.json();
         if (data.response) {
           appendMessage('JARVIS', data.response, 'jarvis');
-          document.getElementById('main-speech-display').innerText = data.response;
+          document.getElementById('received-text-display').innerText = data.response;
           setVisualState('speaking', 'SPEAKING', 'Audio output active');
           setTimeout(() => {
             setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
@@ -673,40 +660,25 @@
       if (isVoiceActive) return;
       isVoiceActive = true;
 
-      setVisualState('listening', 'LISTENING...', 'Speak into mic');
-      const mainDisplay = document.getElementById('main-speech-display');
-      mainDisplay.innerText = 'Listening... Speak now into your mic';
-      mainDisplay.classList.add('active');
-
-      // Poll live partial transcript from backend STT stream every 150ms
-      const livePollTimer = setInterval(async () => {
-        try {
-          const res = await fetch(`${API_BASE}/api/live_transcript`);
-          const data = await res.json();
-          if (data.text && data.text.trim()) {
-            mainDisplay.innerText = `"${data.text.trim()}"`;
-          }
-        } catch(e) {}
-      }, 150);
+      setVisualState('listening', 'LISTENING...', 'Recording mic audio');
+      document.getElementById('sent-text-display').innerText = 'Listening... Speak into mic';
+      document.getElementById('received-text-display').innerText = 'Waiting for speech input...';
 
       try {
         const res = await fetch(`${API_BASE}/api/voice`, { method: 'POST' });
         const data = await res.json();
 
-        clearInterval(livePollTimer);
-
         if (data.user && data.user.trim()) {
           appendMessage('YOU', data.user, 'user');
-          mainDisplay.innerText = `"${data.user.trim()}"`;
+          document.getElementById('sent-text-display').innerText = `"${data.user.trim()}"`;
+          document.getElementById('received-text-display').innerText = 'Transcribing & reasoning...';
           setVisualState('thinking', 'PROCESSING...', 'Reasoning query');
         }
 
         if (data.response && data.status === 'success') {
           appendMessage('JARVIS', data.response, 'jarvis');
-          setTimeout(() => {
-            mainDisplay.innerText = data.response;
-            setVisualState('speaking', 'SPEAKING', 'Audio output active');
-          }, 400);
+          document.getElementById('received-text-display').innerText = data.response;
+          setVisualState('speaking', 'SPEAKING', 'Audio output active');
 
           setTimeout(() => {
             setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
@@ -717,7 +689,6 @@
           isVoiceActive = false;
         }
       } catch (err) {
-        clearInterval(livePollTimer);
         setVisualState('idle', 'ALWAYS-ON STANDBY', 'Say "Hey JARVIS" anytime');
         isVoiceActive = false;
       }

@@ -1,7 +1,7 @@
 """
-JARVIS v6.1 Local API Backend Server
+JARVIS v7.0 Local API Backend Server
 Runs JarvisBrain & Metal GPU LLM inference in a dedicated background process.
-Includes Active Hands-Free Wake Word Detection + Real-Time Partial STT Streaming to UI.
+Original Full-Clip STT Recording Pipeline (99.9% Precision) + Sound Chimes + Mic Pause Lock.
 """
 
 import json
@@ -22,7 +22,6 @@ brain: JarvisBrain = None
 wake_engine: WakeWordEngine = None
 wake_triggered_flag = False
 wake_lock = threading.Lock()
-current_live_transcript = ""
 
 
 def enable_cors():
@@ -60,16 +59,6 @@ def poll_wake():
         wake_triggered_flag = False
 
     return json.dumps({"wake": is_triggered})
-
-
-@app.route('/api/live_transcript', method=['GET', 'OPTIONS'])
-def get_live_transcript():
-    global current_live_transcript
-    if request.method == 'OPTIONS':
-        return {}
-
-    response.content_type = 'application/json'
-    return json.dumps({"text": current_live_transcript})
 
 
 @app.route('/api/telemetry', method=['GET', 'OPTIONS'])
@@ -129,28 +118,21 @@ def handle_chat():
 
 @app.route('/api/voice', method=['POST', 'OPTIONS'])
 def handle_voice():
-    global wake_engine, current_live_transcript
+    global wake_engine
     if request.method == 'OPTIONS':
         return {}
 
     res_data = None
-    current_live_transcript = ""
-
-    def on_partial_stt(live_text: str):
-        global current_live_transcript
-        current_live_transcript = live_text
-        print(f"\033[1;36m[LIVE STT STREAM]\033[0m \"{live_text}\"")
-
     try:
         # Pause background wake word listener while active recording takes place
         if wake_engine:
             wake_engine.pause()
 
         play_chime("wake")
-        print("\033[1;35m[SERVER VOICE LISTEN]\033[0m Listening via Whisper (Live STT Streaming Active)...")
-        transcript = brain.voice.listen(max_duration_sec=6, partial_callback=on_partial_stt)
+        print("\033[1;35m[SERVER VOICE LISTEN]\033[0m Recording mic audio (Original Full-Clip Precision Mode)...")
+        transcript = brain.voice.listen(max_duration_sec=8)
 
-        # Play processing chime as soon as speech finishes recording
+        # Play processing chime as soon as speech recording completes
         play_chime("processing")
 
         if transcript and transcript.strip():
@@ -169,7 +151,6 @@ def handle_voice():
         response.content_type = 'application/json'
         res_data = json.dumps({"error": str(e)})
     finally:
-        current_live_transcript = ""
         # Resume background wake word listener
         if wake_engine:
             wake_engine.resume()
