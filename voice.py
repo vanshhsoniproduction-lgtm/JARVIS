@@ -132,7 +132,7 @@ class VoiceEngine:
                 vad_filter=True,
                 initial_prompt=(
                     "Transcribe spoken English clearly and accurately for JARVIS AI assistant. "
-                    "Keywords: JARVIS, Vansh, project, AI, speech, voice, memory, health, weather, Udaipur, Jaipur."
+                    "Keywords: JARVIS, Vansh, project, AI, voice, memory, health, weather, Jaipur, JDM, rims, wheels, alloys, car, mods, tuning, engine, specs, fitment, aftermarket, Mac, 13 inch, conversion."
                 ),
             )
             transcribed_text = " ".join([seg.text.strip() for seg in segments if seg.text.strip()])

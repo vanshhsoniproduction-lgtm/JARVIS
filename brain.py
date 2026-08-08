@@ -117,9 +117,9 @@ class JarvisBrain:
 
         # 2. Inject personal memories for personal/memory queries
         is_personal_query = bool(re.search(
-            r"\b(me|my|i|myself|about me|who am i|who i am|age|car|name|father|dad|bike|"
-            r"details|memory|remember|pata|pta|bata|batao|batade|"
-            r"mujhe|mereko|meko|mera|meri|mere)\b",
+            r"\b(about me|who am i|who i am|my name|my age|my birthday|my health|my details|"
+            r"do you remember|what do you know about me|remember me|"
+            r"mera naam|mere baare|meri details|kya pata hai)\b",
             user_input, re.IGNORECASE
         ))
 
@@ -214,8 +214,8 @@ class JarvisBrain:
         is_question_input = user_input.strip().endswith("?") or bool(
             re.search(r"^\s*(who|what|whats|which|where|how|do|does|is|are|should|can|could|would|will)\b", user_input, re.I)
         )
-        if not is_question_input:
-            if intent in ("MEMORY_SAVE", "CHAT") and self.memory.is_statement_fact(user_input):
+        if not is_question_input and intent == "MEMORY_SAVE":
+            if self.memory.is_statement_fact(user_input):
                 saved_meta = self.memory.process_and_save_fact(user_input)
                 if saved_meta:
                     print(f"{COLOR_INFO}[MEMORY SAVED] Category: {saved_meta['category']} | Fact: '{saved_meta['fact']}'{COLOR_RESET}")

@@ -71,9 +71,9 @@ HEALTH_STATE_PATTERNS = re.compile(
 
 MEMORY_QUERY_PATTERNS = re.compile(
     r"\b("
-    # English query patterns
-    r"which car do i|what car do i|which car i have|which car i own|what car i have|do i have a car|my car|"
-    r"what is my name|my name|my age|how old am i|my birthday|do you remember|what do i like|what car do i own|which vehicle|my vehicle|my preferences|"
+    # English query patterns — specific questions, not bare nouns
+    r"which car do i|what car do i|which car i have|which car i own|what car i have|do i have a car|what is my car|which car is mine|"
+    r"what is my name|my name|my age|how old am i|my birthday|do you remember|what do i like|what car do i own|which vehicle|what vehicle do i have|my preferences|"
     r"tell me about my|do you know my|what do you know about me|what do you remember|"
     r"what's my|whats my|who is my|what are my|"
     r"do i have|do i own|what did i tell you|"
