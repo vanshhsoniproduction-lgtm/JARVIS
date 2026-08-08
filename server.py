@@ -199,6 +199,24 @@ def kill_existing_port(port: int):
         pass
 
 
+# Multi-threaded WSGI server — prevents /api/voice from blocking all other requests
+from bottle import ServerAdapter
+from wsgiref.simple_server import make_server, WSGIServer, WSGIRequestHandler
+import socketserver
+
+class _ThreadingWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
+    daemon_threads = True
+
+class _QuietHandler(WSGIRequestHandler):
+    def log_request(self, *args, **kw):
+        pass  # Suppress per-request logs
+
+class ThreadedServer(ServerAdapter):
+    def run(self, handler):
+        srv = make_server(self.host, self.port, handler, _ThreadingWSGIServer, _QuietHandler)
+        srv.serve_forever()
+
+
 def run_server(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf", port: int = 8765):
     global brain, wake_engine, wake_triggered_flag
     kill_existing_port(port)
@@ -222,7 +240,8 @@ def run_server(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf", port: int = 876
     wake_engine = WakeWordEngine(stt_model=brain.voice.stt_model, on_wake_callback=on_wake_triggered)
     wake_engine.start()
 
-    app.run(host='127.0.0.1', port=port, quiet=True)
+    # Use multi-threaded server so /api/voice doesn't block page loads and polling
+    app.run(host='127.0.0.1', port=port, quiet=True, server=ThreadedServer)
 
 
 if __name__ == '__main__':
