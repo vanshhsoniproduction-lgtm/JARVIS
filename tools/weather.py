@@ -39,13 +39,25 @@ WMO_CODES = {
 }
 
 
-def get_user_ip_geo() -> Dict[str, Any]:
+def get_user_ip_geo(location_consent: bool = False) -> Dict[str, Any]:
     """Detect real physical city, region, country, lat, lon of the user via IP geolocation (cached 1h)."""
     global _CACHED_GEO, _CACHED_GEO_TIME
+    
+    # Fast path: without consent, return generic placeholder or none
+    if not location_consent:
+        return {
+            "city": "Unknown",
+            "region": "Unknown",
+            "country": "Unknown",
+            "lat": 0.0,
+            "lon": 0.0,
+        }
+
     now = time.time()
     if _CACHED_GEO and (now - _CACHED_GEO_TIME) < 3600:
         return _CACHED_GEO
 
+    # This hits a third-party service and must only be called with explicit consent
     if requests is not None:
         try:
             res = requests.get("http://ip-api.com/json/", timeout=3).json()
@@ -72,19 +84,23 @@ def get_user_ip_geo() -> Dict[str, Any]:
     }
 
 
-def get_auto_location() -> str:
+def get_auto_location(location_consent: bool = False) -> str:
     """Returns city name string."""
-    return get_user_ip_geo()["city"]
+    return get_user_ip_geo(location_consent)["city"]
 
 
-def fetch_weather(city: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None) -> Optional[str]:
+def fetch_weather(city: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None, location_consent: bool = False) -> Optional[str]:
     if requests is None:
         return None
 
-    geo_info = get_user_ip_geo()
+    geo_info = get_user_ip_geo(location_consent)
     is_custom_city = False
+    
+    has_gps = (lat is not None and lon is not None)
+    if not location_consent and not has_gps and not city:
+        return "[LOCATION STATUS: GPS ACCESS DENIED] Cannot provide local weather without location consent or an explicit city name."
 
-    if lat is not None and lon is not None:
+    if has_gps:
         target_lat = lat
         target_lon = lon
         city_name = city
@@ -104,11 +120,15 @@ def fetch_weather(city: Optional[str] = None, lat: Optional[float] = None, lon: 
             location_label = f"Live GPS Location ({city_name})"
     elif city and city.strip():
         target_city = city.strip()
-        if target_city.lower() != geo_info["city"].lower():
+        if target_city.lower() != geo_info["city"].lower() and location_consent:
             is_custom_city = True
             location_label = f"City of {target_city}"
-        else:
+        elif location_consent:
             location_label = f"City of {geo_info['city']}, {geo_info['region']}"
+        else:
+            is_custom_city = True
+            location_label = f"City of {target_city}"
+            
         target_lat = geo_info["lat"]
         target_lon = geo_info["lon"]
     else:

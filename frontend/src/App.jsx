@@ -171,6 +171,9 @@ function AppContent() {
 
     await sendStreamRequest(
       payloadToSend,
+      locationEnabled,
+      targetConvId,
+      userTurn.id,
       (token, fullText) => {
         setState("speaking");
         accumulatedText = fullText;
@@ -312,6 +315,7 @@ function AppContent() {
               onTriggerVoice={handleTriggerVoice}
               recentConversations={conversations}
               onNewConversation={handleNewConversation}
+              telemetry={telemetry}
             />
           }
         />
@@ -361,7 +365,7 @@ function AppContent() {
         <Route path="tools" element={<ToolsCenter />} />
         <Route path="activity" element={<ActivityCenter />} />
         <Route path="settings" element={<SettingsPage />} />
-        <Route path="profile" element={<ProfilePage />} />
+        <Route path="profile" element={<ProfilePage telemetry={telemetry} />} />
       </Route>
     </Routes>
   );

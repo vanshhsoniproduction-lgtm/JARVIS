@@ -1,6 +1,11 @@
 const SETTINGS_KEY = "jarvis_settings_v1";
 
 export const DEFAULT_SETTINGS = {
+  user: {
+    name: "Vansh Soni",
+    hometown: "Amritsar, Punjab",
+    addressTerm: "Sir",
+  },
   general: {
     startupBehavior: "home",
     language: "English / Hinglish",

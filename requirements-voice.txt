@@ -1,0 +1,6 @@
+sounddevice
+faster-whisper
+TTS
+torch
+openwakeword
+sentence-transformers

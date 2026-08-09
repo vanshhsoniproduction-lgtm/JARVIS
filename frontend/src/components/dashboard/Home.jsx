@@ -18,20 +18,29 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatDateSafe } from "@/lib/utils";
 
-export function Home({ onTriggerVoice, recentConversations = [], onNewConversation }) {
+export function Home({ onTriggerVoice, recentConversations = [], onNewConversation, telemetry }) {
   const navigate = useNavigate();
+  const [settings, setSettings] = React.useState(null);
+
+  React.useEffect(() => {
+    import("@/services/settingsService").then((mod) => {
+      setSettings(mod.getSettings());
+    });
+  }, []);
 
   const handleQuickPrompt = (promptText) => {
     onNewConversation();
     navigate("/chat", { state: { autoSend: promptText } });
   };
+  
+  const userName = settings?.user?.name || "Vansh";
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-4 animate-in fade-in-50 duration-300">
       {/* Header Greeting */}
       <div className="space-y-1 text-left">
         <h1 className="text-2xl md:text-3xl font-semibold font-sans tracking-tight text-zinc-100">
-          Good morning, <span className="text-zinc-300">Vansh</span>.
+          Good morning, <span className="text-zinc-300">{userName}</span>.
         </h1>
         <p className="text-xs md:text-sm text-zinc-400 font-sans">
           What can JARVIS orchestrate for you today?
@@ -235,7 +244,7 @@ export function Home({ onTriggerVoice, recentConversations = [], onNewConversati
                 <span className="flex items-center gap-1.5">
                   <Activity className="w-3 h-3 text-zinc-500" /> Status
                 </span>
-                <span className="text-zinc-200">100% Healthy</span>
+                <span className="text-zinc-200">{telemetry?.health || "100% Healthy"}</span>
               </div>
             </div>
           </Card>

@@ -202,7 +202,7 @@ class JarvisBrain:
         import random
         return random.choice(questions)
 
-    def process_turn_stream(self, user_input: str):
+    def process_turn_stream(self, user_input: str, location_consent: bool = False, conversation_id: str = None, message_id: str = None):
         """
         Yields ('token', content) in real-time as tokens arrive from LLM.
         Queues complete sentences to background TTS worker.
@@ -248,7 +248,10 @@ class JarvisBrain:
                 key=fact_key,
                 fact=fact_str,
                 category="Personal",
-                importance="MEDIUM"
+                importance="HIGH",
+                source="user_chat",
+                source_conversation_id=conversation_id,
+                source_message_id=message_id
             )
             print(f"{COLOR_INFO}[DYNAMIC MEMORY SAVED] {fact_str}{COLOR_RESET}")
 
@@ -296,10 +299,11 @@ class JarvisBrain:
             if gps_match:
                 lat_val = float(gps_match.group(1))
                 lon_val = float(gps_match.group(2))
-                wx_data = fetch_weather(lat=lat_val, lon=lon_val)
+                if lat_val and lon_val:
+                    wx_data = fetch_weather(lat=lat_val, lon=lon_val, location_consent=location_consent)
             else:
                 city = extract_city(user_input, default_city=None)
-                wx_data = fetch_weather(city=city)
+                wx_data = fetch_weather(city=city, location_consent=location_consent)
 
             if wx_data:
                 turn_messages.append({
@@ -451,10 +455,10 @@ class JarvisBrain:
 
         yield ("done", clean_response)
 
-    def process_turn(self, user_input: str) -> str:
+    def process_turn(self, user_input: str, location_consent: bool = False, conversation_id: str = None, message_id: str = None) -> str:
         """Synchronous wrapper around process_turn_stream for backward compatibility."""
         final_resp = ""
-        for chunk_type, content in self.process_turn_stream(user_input):
+        for chunk_type, content in self.process_turn_stream(user_input, location_consent=location_consent, conversation_id=conversation_id, message_id=message_id):
             if chunk_type == "done":
                 final_resp = content
         return final_resp or "Yes Vansh, how can I help?"

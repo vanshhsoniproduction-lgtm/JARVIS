@@ -140,6 +140,10 @@ class MemoryDatabase:
                     cursor.execute("ALTER TABLE memories ADD COLUMN updated_at TIMESTAMP")
                 if "source" not in columns:
                     cursor.execute("ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'user_chat'")
+                if "source_conversation_id" not in columns:
+                    cursor.execute("ALTER TABLE memories ADD COLUMN source_conversation_id TEXT")
+                if "source_message_id" not in columns:
+                    cursor.execute("ALTER TABLE memories ADD COLUMN source_message_id TEXT")
 
                 # ── Temp States table (v3.0) ──────────────────────────────
                 # Stores ephemeral conditions like illness, exams, travel, etc.
@@ -162,17 +166,7 @@ class MemoryDatabase:
                 if "last_checked" not in ts_columns:
                     cursor.execute("ALTER TABLE temp_states ADD COLUMN last_checked TIMESTAMP")
 
-                # ── Conversations table ──────────────────────────────
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS conversations (
-                        id TEXT PRIMARY KEY,
-                        title TEXT,
-                        workspace_id TEXT DEFAULT 'default',
-                        pinned INTEGER DEFAULT 0,
-                        messages_json TEXT,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+                # (Removed unused conversations table from memory.db)
 
                 # ── Activity logs table ──────────────────────────────
                 cursor.execute("""
@@ -217,20 +211,23 @@ class MemoryDatabase:
     # ─────────────────────────────────────────────────────────────
 
     def save_memory(self, key: str, fact: str, category: str = "Personal",
-                    importance: str = "MEDIUM", source: str = "user_chat"):
+                    importance: str = "MEDIUM", source: str = "user_chat",
+                    source_conversation_id: str = None, source_message_id: str = None):
         now = time.strftime('%Y-%m-%d %H:%M:%S')
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO memories (key, category, fact, importance, source, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO memories (key, category, fact, importance, source, updated_at, source_conversation_id, source_message_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(key) DO UPDATE SET
                         fact=excluded.fact,
                         category=excluded.category,
                         importance=excluded.importance,
-                        updated_at=excluded.updated_at
-                """, (key, category, fact, importance, source, now))
+                        updated_at=excluded.updated_at,
+                        source_conversation_id=excluded.source_conversation_id,
+                        source_message_id=excluded.source_message_id
+                """, (key, category, fact, importance, source, now, source_conversation_id, source_message_id))
                 conn.commit()
         except sqlite3.DatabaseError as e:
             print(f"[JARVIS DB] Warning: Failed to save memory: {e}")

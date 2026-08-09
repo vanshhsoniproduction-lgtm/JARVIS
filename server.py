@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import threading
+import hashlib
 from bottle import Bottle, request, response, static_file, ServerAdapter
 
 # Add project root to sys.path
@@ -129,8 +130,9 @@ def get_telemetry():
         loc_str = None
         if lat and lon:
             try:
-                wx = fetch_weather(lat=float(lat), lon=float(lon))
-                loc_str = wx.get("city", "Live GPS Location")
+                # If lat/lon are explicitly passed, it means we have location consent
+                geo = get_user_ip_geo(location_consent=True)
+                loc_str = f"Live GPS Location ({geo.get('city', 'Unknown')})"
             except Exception:
                 loc_str = None
 
@@ -183,6 +185,9 @@ def handle_chat_stream():
     try:
         data = request.json or {}
         text = data.get("text", "").strip()
+        location_consent = bool(data.get("locationConsent", False))
+        conversation_id = data.get("conversationId")
+        message_id = data.get("messageId")
 
         if not text:
             response.content_type = 'application/json'
@@ -210,7 +215,12 @@ def handle_chat_stream():
             t0 = time.time()
             try:
                 print(f"\033[1;32m[SERVER CHAT STREAM RECV]\033[0m {text}")
-                for chunk_type, content in brain.process_turn_stream(text):
+                for chunk_type, content in brain.process_turn_stream(
+                    text,
+                    location_consent=location_consent,
+                    conversation_id=conversation_id,
+                    message_id=message_id
+                ):
                     payload = json.dumps({"type": chunk_type, "content": content})
                     yield f"data: {payload}\n\n"
                 
@@ -248,6 +258,9 @@ def handle_chat():
     try:
         data = request.json or {}
         text = data.get("text", "").strip()
+        location_consent = bool(data.get("locationConsent", False))
+        conversation_id = data.get("conversationId")
+        message_id = data.get("messageId")
 
         if not text:
             response.content_type = 'application/json'
@@ -264,7 +277,12 @@ def handle_chat():
             wake_engine.pause()
 
         print(f"\033[1;32m[SERVER CHAT RECV]\033[0m {text}")
-        reply = brain.process_turn(text)
+        reply = brain.process_turn(
+            text,
+            location_consent=location_consent,
+            conversation_id=conversation_id,
+            message_id=message_id
+        )
 
         response.content_type = 'application/json'
         return json.dumps({
@@ -364,14 +382,26 @@ def handle_memories():
             if not key:
                 key = f"fact_{category.lower()}_{int(time.time())}"
             brain.memory.db.save_memory(key=key, fact=fact, category=category, importance=importance, source="UI")
+            brain.memory.db.log_activity(
+                title="Memory Added (UI)",
+                module="Memory Database",
+                log_type="MEMORY",
+                status="Success"
+            )
             return json.dumps({"status": "success", "key": key})
 
         elif request.method == 'DELETE':
             key = request.query.get("key", "").strip()
-            if key:
-                brain.memory.db.delete_memory(key)
-                return json.dumps({"status": "deleted", "key": key})
-            return json.dumps({"error": "Key parameter required"})
+            if not key:
+                return json.dumps({"error": "Key is required"})
+            brain.memory.db.delete_memory(key)
+            brain.memory.db.log_activity(
+                title="Memory Deleted (UI)",
+                module="Memory Database",
+                log_type="MEMORY",
+                status="Success"
+            )
+            return json.dumps({"status": "success"})
 
     except Exception as e:
         print(f"[SERVER MEMORIES ERROR] {e}")
@@ -398,7 +428,7 @@ def handle_tools():
             "name": "Terminal Executor",
             "description": "Executes local shell commands and system scripts",
             "permission": "Ask Every Time",
-            "status": "active",
+            "status": "planned",
             "category": "System",
         },
         {
@@ -406,7 +436,7 @@ def handle_tools():
             "name": "Filesystem Manager",
             "description": "Read, write, and index local project documents",
             "permission": "Ask Every Time",
-            "status": "active",
+            "status": "planned",
             "category": "System",
         },
         {
@@ -455,14 +485,26 @@ def handle_conversations():
                 return json.dumps({"error": "Conversation ID is required"})
 
             brain.memory.db.save_conversation(conv_id, title, workspace_id, pinned, messages)
+            brain.memory.db.log_activity(
+                title=f"Chat Updated: {title}",
+                module="Conversation Engine",
+                log_type="SYSTEM",
+                status="Success"
+            )
             return json.dumps({"status": "saved", "id": conv_id})
 
         elif request.method == 'DELETE':
             conv_id = request.query.get("id", "").strip()
-            if conv_id:
-                brain.memory.db.delete_conversation(conv_id)
-                return json.dumps({"status": "deleted", "id": conv_id})
-            return json.dumps({"error": "ID parameter required"})
+            if not conv_id:
+                return json.dumps({"error": "ID parameter required"})
+            brain.memory.db.delete_conversation(conv_id)
+            brain.memory.db.log_activity(
+                title=f"Chat Deleted: {conv_id}",
+                module="Conversation Engine",
+                log_type="SYSTEM",
+                status="Success"
+            )
+            return json.dumps({"status": "deleted", "id": conv_id})
 
     except Exception as e:
         print(f"[SERVER CONVERSATIONS ERROR] {e}")
@@ -562,6 +604,12 @@ def handle_upload_file():
                     category="Projects",
                     importance="HIGH",
                     source="Knowledge Base"
+                )
+                brain.memory.db.log_activity(
+                    title=f"Indexed Knowledge: {filename}",
+                    module="Knowledge System",
+                    log_type="SYSTEM",
+                    status="Success"
                 )
 
             return json.dumps({
