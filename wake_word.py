@@ -15,6 +15,7 @@ import subprocess
 import re
 import numpy as np
 from typing import Callable, Optional
+from voice import MIC_LOCK
 
 try:
     import sounddevice as sd
@@ -38,12 +39,12 @@ def play_chime(chime_type: str = "wake"):
     threading.Thread(target=_play, daemon=True).start()
 
 
-# Robust wake word pattern: catches "jarvis", "hey jarvis", "hi jarvis", "hello jarvis"
+# Strict wake word pattern: catches "jarvis", "hey jarvis", "hi jarvis", "hello jarvis", "ok jarvis"
 WAKE_PATTERN = re.compile(
-    r"\b(jarvis|hey jarvis|hi jarvis|hello jarvis|yo jarvis)\b",
+    r"\b(jarvis|hey jarvis|hi jarvis|hello jarvis|yo jarvis|ok jarvis|okay jarvis)\b",
     re.IGNORECASE
 )
-MAX_WAKE_WORDS = 8  # Accept short phrases containing wake word
+MAX_WAKE_WORDS = 6  # Accept short phrases containing wake word
 
 
 class WakeWordEngine:
@@ -56,10 +57,10 @@ class WakeWordEngine:
         self.sample_rate = 16000
         self.cooldown_until = 0.0
 
-        # Audio config — 1.2s window, 0.035 sensitive energy threshold
-        self._chunk_sec = 1.2
+        # Audio config — 1.0s window, 0.025 sensitive energy threshold for Mac mic
+        self._chunk_sec = 1.0
         self._chunk_samples = int(self._chunk_sec * self.sample_rate)
-        self._energy_threshold = 0.035
+        self._energy_threshold = 0.025
 
     def start(self):
         """Start background wake word listener thread."""
@@ -67,8 +68,7 @@ class WakeWordEngine:
             return
         self.is_running = True
         self.is_paused = False
-        # 1.0-second fast startup cooldown
-        self.cooldown_until = time.time() + 1.0
+        self.cooldown_until = time.time() + 0.5
         self.thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.thread.start()
         print("\033[1;36m[WAKE WORD ENGINE] Active & Listening for 'Hey JARVIS' / 'JARVIS'...\033[0m")
@@ -78,13 +78,13 @@ class WakeWordEngine:
         self.is_running = False
 
     def pause(self):
-        """Pause wake detection. Signals the loop to close the mic stream so voice.py can use it."""
+        """Pause wake detection. Release mic stream so voice STT can record."""
         self.is_paused = True
 
     def resume(self):
-        """Resume wake detection. The loop will reopen the mic stream."""
+        """Resume wake detection."""
         self.is_paused = False
-        self.cooldown_until = time.time() + 4.0  # 4s cooldown on resume
+        self.cooldown_until = time.time() + 0.3  # Fast 0.3s cooldown on resume
 
     def _listen_loop(self):
         """
@@ -98,9 +98,13 @@ class WakeWordEngine:
             return
 
         while self.is_running:
-            # Wait until not paused
             if self.is_paused:
-                time.sleep(0.3)
+                time.sleep(0.1)
+                continue
+
+            acquired = MIC_LOCK.acquire(blocking=True, timeout=0.2)
+            if not acquired:
+                time.sleep(0.1)
                 continue
 
             try:
@@ -164,13 +168,17 @@ class WakeWordEngine:
                         if WAKE_PATTERN.search(text):
                             print(f"\033[1;33m⚡ [WAKE WORD DETECTED] \"{text}\"\033[0m")
                             play_chime("wake")
-                            self.cooldown_until = time.time() + 12.0
+                            self.cooldown_until = time.time() + 1.0
                             if self.on_wake_callback:
                                 self.on_wake_callback()
 
-                # Stream closed here when paused or stopped — mic is released
             except Exception as e:
                 time.sleep(0.5)
+            finally:
+                try:
+                    MIC_LOCK.release()
+                except RuntimeError:
+                    pass
 
 
 def test_wake_word():

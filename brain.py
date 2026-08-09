@@ -102,10 +102,6 @@ class JarvisBrain:
         self.stop_requested = True
         if self.voice:
             self.voice.stop()
-        try:
-            self.llm.reset()
-        except Exception:
-            pass
 
     def _trim_history(self):
         """Keep only the last MAX_HISTORY_TURNS turns in memory to prevent RAM bloat."""
@@ -126,7 +122,32 @@ class JarvisBrain:
         if temp_context:
             parts.append(temp_context)
 
-        # 2. Inject personal memories for personal/memory queries
+        # 2. Inject Knowledge Base file list if queried
+        is_kb_query = bool(re.search(
+            r"\b(knowledge base|knowledge files|uploaded files|files stored|which files|what files|files in knowledge|document list)\b",
+            user_input, re.IGNORECASE
+        ))
+        if is_kb_query:
+            kdir = os.path.join(os.path.dirname(__file__), "database", "knowledge_files")
+            files = [f for f in os.listdir(kdir) if not f.startswith(".")] if os.path.exists(kdir) else []
+            if files:
+                file_list_str = ", ".join(files)
+                parts.append(
+                    f"[KNOWLEDGE BASE ACCESSIBLE]\n"
+                    f"JARVIS has FULL access to the Knowledge Base.\n"
+                    f"Currently stored Knowledge Base files: {file_list_str}\n"
+                    f"You can read and answer questions about any of these files.\n"
+                    f"[/KNOWLEDGE BASE]"
+                )
+            else:
+                parts.append(
+                    f"[KNOWLEDGE BASE ACCESSIBLE]\n"
+                    f"JARVIS has FULL access to the Knowledge Base system, but NO files are currently uploaded in the Knowledge Base directory.\n"
+                    f"Tell Vansh he can upload PDF, TXT, MD, or Code files in the Knowledge Base tab anytime.\n"
+                    f"[/KNOWLEDGE BASE]"
+                )
+
+        # 3. Inject personal memories for personal/memory queries
         is_personal_query = bool(re.search(
             r"\b(about me|who am i|who i am|my name|my age|my birthday|my health|my details|"
             r"hometown|home town|native|city|medical|history|histry|illness|cold|past health|"
@@ -258,8 +279,20 @@ class JarvisBrain:
 
         # ── 7. Tool Execution: Weather & Live Telemetry ───────────────────────
         needs_wx = should_fetch_weather or updates.get("needs_weather")
-        if needs_wx:
-            gps_match = re.search(r"LIVE GPS:\s*lat\s*([\d.-]+),\s*lon\s*([\d.-]+)", user_input, re.IGNORECASE)
+        is_location_query = bool(re.search(r"\b(where am i|my location|current location|where i am)\b", user_input, re.IGNORECASE))
+        gps_match = re.search(r"LIVE GPS:\s*lat\s*([\d.-]+),\s*lon\s*([\d.-]+)", user_input, re.IGNORECASE)
+
+        if is_location_query and not gps_match:
+            turn_messages.append({
+                "role": "system",
+                "content": (
+                    "[LOCATION STATUS: GPS ACCESS DENIED BY USER]\n"
+                    "Vansh has DENIED browser GPS location access for this query.\n"
+                    "Explicitly state to Vansh that browser GPS location access was DENIED or not granted, "
+                    "so you cannot determine his real-time GPS location."
+                )
+            })
+        elif needs_wx:
             if gps_match:
                 lat_val = float(gps_match.group(1))
                 lon_val = float(gps_match.group(2))

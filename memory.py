@@ -413,24 +413,22 @@ class MemoryEngine:
         archived = []
 
         for state in resolved_states:
-            resolved_dt = datetime.now().strftime('%d %b %Y, %I:%M %p')
             display = state.get("key", "illness").replace("health_", "").replace("_", " ").title()
-            archive_fact = (
-                f"Vansh had {display} "
-                f"from {state.get('started_at', 'earlier')} — recovered on {resolved_dt}"
-            )
-            archive_key = f"health_history_{state['key']}_{int(time.time())}"
-            self.db.save_memory(
-                key=archive_key,
-                fact=archive_fact,
-                category="HealthHistory",
-                importance="MEDIUM",
-                source="health_resolution"
-            )
+
+            # Purge matching health keys/facts from memories table to prevent re-injection hallucination
+            try:
+                import sqlite3
+                with sqlite3.connect(self.db.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM memories WHERE category IN ('Health', 'HealthHistory') OR key LIKE ?", (f"%{state['key']}%",))
+                    conn.commit()
+            except Exception as pe:
+                print(f"[MEMORY PURGE ERROR] {pe}")
+
             archived.append({
                 "key": state["key"],
                 "display": display,
-                "archived_fact": archive_fact,
+                "archived_fact": f"Resolved {display}",
             })
 
         return archived
@@ -440,41 +438,70 @@ class MemoryEngine:
         display = condition_key.replace("health_", "").replace("_", " ").title()
         return self.save_dynamic_condition(display)
 
+    def save_memory(self, fact: str, category: str = "Personal", key: Optional[str] = None, importance: str = "MEDIUM", source: str = "UI") -> str:
+        """Direct helper method to save a memory fact into SQLite memories table."""
+        if not key:
+            key = f"fact_{category.lower()}_{int(time.time())}"
+        self.db.save_memory(key=key, fact=fact, category=category, importance=importance, source=source)
+        return key
+
     def resolve_health_states(self) -> List[Dict[str, Any]]:
         """Legacy wrapper — delegates to resolve_dynamic_condition."""
         return self.resolve_dynamic_condition(None)
 
     def get_active_temp_context(self) -> str:
         """
-        Build a formatted string of all active temp states for context injection.
-        If no active states exist, explicitly informs JARVIS that Vansh is 100% healthy.
+        Build a formatted string of active health conditions AND past resolved health history.
+        Passed to system prompt so JARVIS can answer both active health and historical health questions.
         """
         active = self.db.get_active_temp_states()
-        if not active:
-            return (
+        resolved = self.db.get_resolved_temp_states(limit=10)
+
+        parts = []
+
+        if active:
+            lines = []
+            for state in active:
+                display = state.get("key", "").replace("health_", "").replace("_", " ").title()
+                if not display:
+                    display = state.get("category", "Health Condition")
+                started = state.get("started_at", "recently")
+                lines.append(f"  - {display} (started: {started})")
+
+            block = "\n".join(lines)
+            parts.append(
+                f"[HEALTH STATUS: ACTIVE ILLNESS / CONDITION]\n"
+                f"Vansh currently has the following ACTIVE health conditions:\n"
+                f"{block}\n"
+                f"Apply general common-sense medical reasoning regarding these active conditions.\n"
+                f"[/HEALTH STATUS]"
+            )
+        else:
+            parts.append(
                 "[HEALTH STATUS: HEALTHY]\n"
-                "Vansh currently has NO active illnesses, injuries, or health conditions. He is 100% healthy and fully recovered.\n"
-                "Do NOT assume or mention any illness, recovery, or health restriction unless Vansh specifically asks.\n"
+                "Vansh currently has NO active illnesses, injuries, or health conditions. He is 100% healthy.\n"
                 "[/HEALTH STATUS]"
             )
 
-        lines = []
-        for state in active:
-            display = state.get("key", "").replace("health_", "").replace("_", " ").title()
-            if not display:
-                display = state.get("category", "Health Condition")
-            started = state.get("started_at", "recently")
-            lines.append(f"  - {display} (since: {started})")
+        if resolved:
+            hist_lines = []
+            for r in resolved:
+                display = r.get("key", "").replace("health_", "").replace("_", " ").title()
+                if not display:
+                    display = r.get("fact", "Condition")
+                started = r.get("started_at", "earlier")
+                res_time = r.get("resolved_at", "recently")
+                hist_lines.append(f"  - {display} (from {started} to {res_time}) — RESOLVED / RECOVERED")
 
-        block = "\n".join(lines)
-        return (
-            f"[HEALTH STATUS: ACTIVE ILLNESS / CONDITION]\n"
-            f"Vansh currently has the following ACTIVE health conditions:\n"
-            f"{block}\n"
-            f"Apply general common-sense medical reasoning regarding these active conditions. "
-            f"Evaluate whether any foods, beverages, activities, or choices mentioned by Vansh complement or aggravate these active conditions.\n"
-            f"[/HEALTH STATUS]"
-        )
+            hist_block = "\n".join(hist_lines)
+            parts.append(
+                f"[HEALTH HISTORY: PAST RESOLVED CONDITIONS]\n"
+                f"Recorded past health history for Vansh:\n"
+                f"{hist_block}\n"
+                f"[/HEALTH HISTORY]"
+            )
+
+        return "\n\n".join(parts)
 
     def get_stale_temp_states(self, hours: float = 24.0) -> List[Dict[str, Any]]:
         """Return active temp states that haven't been checked in for `hours`."""

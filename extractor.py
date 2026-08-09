@@ -80,13 +80,26 @@ class LLMExtractor:
             lower_text
         ))
 
-        # Fast-path: Skip slow LLM completion for casual queries (speeds up streaming response by 3 seconds)
+        # Fast-path: Check for any health, injury, illness, or state declarations
         has_state_declaration = bool(re.search(
-            r"\b(have a|having a|suffering|recovered|cured|cold|fever|illness|bimaar|theek ho|save this|remember that|my name is|i own|i live)\b",
+            r"\b(have|having|got|suffering|hurt|injured|injury|pain|broke|sprained|cut|wound|ache|cold|fever|cough|headache|stomachache|sick|bimaar|tabiyat|recovered|cured|better|my name|i live|i work|i prefer|save this|remember|note that|vansh has|vansh is)\b",
             lower_text
         ))
 
-        if not has_state_declaration:
+        # Check if query is a question or denial
+        is_question_or_denial = bool(re.search(
+            r"^\s*(who|what|why|how|where|when|do|does|did|am|is|are|who said|who told|don't|dont|not|no|never)\b|\?",
+            lower_text
+        ))
+
+        # Direct rule-based extraction for explicit health conditions ONLY if not a question/denial
+        direct_condition = None
+        if not is_question_or_denial:
+            injury_match = re.search(r"\b(arm injury|leg injury|head injury|back injury|cold|fever|headache|cough|flu|asthma|sprain|fracture|migraine|throat infection|stomach ache)\b", lower_text)
+            if injury_match:
+                direct_condition = injury_match.group(1).title()
+
+        if not has_state_declaration and not direct_condition:
             default_res["needs_weather"] = has_weather_intent
             default_res["needs_memory"] = has_memory_intent
             return default_res
@@ -109,18 +122,23 @@ class LLMExtractor:
             # Parse JSON safely
             data = self._parse_json_response(raw)
             if data:
-                # Merge fallback regex signals if LLM missed subtle tool intent
+                if is_question_or_denial:
+                    data["new_condition"] = None
                 if has_weather_intent:
                     data["needs_weather"] = True
                 if has_memory_intent:
                     data["needs_memory"] = True
+                if direct_condition and not data.get("new_condition"):
+                    data["new_condition"] = direct_condition
 
                 print(f"\033[1;35m[LLM EXTRACTOR ({elapsed:.2f}s)] {json.dumps(data)}\033[0m")
                 return data
         except Exception as e:
             print(f"\033[1;31m[LLM EXTRACTOR ERROR] {e}\033[0m")
 
-        # Fallback to regex signals if extraction failed
+        # Fallback to direct condition regex if not question/denial
+        if direct_condition and not is_question_or_denial:
+            default_res["new_condition"] = direct_condition
         default_res["needs_weather"] = has_weather_intent
         default_res["needs_memory"] = has_memory_intent
         return default_res

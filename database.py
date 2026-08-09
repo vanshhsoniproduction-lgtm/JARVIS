@@ -24,6 +24,7 @@ from typing import List, Dict, Any, Optional
 DB_DIR = os.path.join(os.path.dirname(__file__), "database")
 os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "memory.db")
+CONVO_DB_PATH = os.path.join(DB_DIR, "conversations.db")
 
 # Stop words — these are too common to be useful search terms
 STOP_WORDS = {
@@ -161,6 +162,31 @@ class MemoryDatabase:
                 if "last_checked" not in ts_columns:
                     cursor.execute("ALTER TABLE temp_states ADD COLUMN last_checked TIMESTAMP")
 
+                # ── Conversations table ──────────────────────────────
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS conversations (
+                        id TEXT PRIMARY KEY,
+                        title TEXT,
+                        workspace_id TEXT DEFAULT 'default',
+                        pinned INTEGER DEFAULT 0,
+                        messages_json TEXT,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # ── Activity logs table ──────────────────────────────
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS activity_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        module TEXT NOT NULL,
+                        type TEXT DEFAULT 'System',
+                        status TEXT DEFAULT 'Success',
+                        latency TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
                 conn.commit()
         except sqlite3.DatabaseError as e:
             print(f"[JARVIS DB] Warning: Database initialization error: {e}")
@@ -285,6 +311,18 @@ class MemoryDatabase:
             print(f"[JARVIS DB] Warning: Category search failed: {e}")
             return []
 
+    def delete_memory(self, key: str) -> bool:
+        """Delete a memory entry by key from memories table."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM memories WHERE key = ?", (key,))
+                conn.commit()
+                return True
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Delete memory failed: {e}")
+            return False
+
     def delete_by_category(self, category: str):
         """Delete memories matching a category (legacy — use resolve_temp_state instead)."""
         try:
@@ -321,6 +359,23 @@ class MemoryDatabase:
         except sqlite3.DatabaseError as e:
             print(f"[JARVIS DB] Warning: Failed to save temp state: {e}")
             return False
+
+    def get_resolved_temp_states(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get resolved temp states (is_active = 0) for health history queries."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM temp_states
+                    WHERE is_active = 0
+                    ORDER BY resolved_at DESC
+                    LIMIT ?
+                """, (limit,))
+                return [dict(r) for r in cursor.fetchall()]
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Failed to fetch resolved temp states: {e}")
+            return []
 
     def get_active_temp_states(self) -> List[Dict[str, Any]]:
         """Get all currently active temp states (is_active=1)."""
@@ -472,6 +527,108 @@ class MemoryDatabase:
                 return [dict(row) for row in cursor.fetchall()]
         except sqlite3.DatabaseError as e:
             print(f"[JARVIS DB] Warning: Failed to get stale temp states: {e}")
+            return []
+
+    def _init_convo_db(self):
+        """Initialize separate conversations.db SQLite database."""
+        try:
+            with sqlite3.connect(CONVO_DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS conversations (
+                        id TEXT PRIMARY KEY,
+                        title TEXT,
+                        workspace_id TEXT DEFAULT 'default',
+                        pinned INTEGER DEFAULT 0,
+                        messages_json TEXT,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
+        except sqlite3.DatabaseError as e:
+            print(f"[JARVIS DB] Warning: Convo database initialization error: {e}")
+
+    def get_all_conversations(self) -> List[Dict[str, Any]]:
+        self._init_convo_db()
+        try:
+            import json
+            with sqlite3.connect(CONVO_DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM conversations ORDER BY updated_at DESC")
+                rows = cursor.fetchall()
+                results = []
+                for row in rows:
+                    item = dict(row)
+                    item["pinned"] = bool(item.get("pinned", 0))
+                    try:
+                        item["messages"] = json.loads(item.get("messages_json") or "[]")
+                    except Exception:
+                        item["messages"] = []
+                    item["createdAt"] = item.get("updated_at")
+                    item["updatedAt"] = item.get("updated_at")
+                    item["workspaceId"] = item.get("workspace_id") or "default"
+                    results.append(item)
+                return results
+        except Exception as e:
+            print(f"[JARVIS DB] Error fetching conversations: {e}")
+            return []
+
+    def save_conversation(self, conv_id: str, title: str, workspace_id: str, pinned: bool, messages: list):
+        self._init_convo_db()
+        try:
+            import json
+            now = time.strftime('%Y-%m-%d %H:%M:%S')
+            msgs_json = json.dumps(messages)
+            with sqlite3.connect(CONVO_DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO conversations (id, title, workspace_id, pinned, messages_json, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        title = excluded.title,
+                        workspace_id = excluded.workspace_id,
+                        pinned = excluded.pinned,
+                        messages_json = excluded.messages_json,
+                        updated_at = excluded.updated_at
+                """, (conv_id, title, workspace_id or "default", 1 if pinned else 0, msgs_json, now))
+                conn.commit()
+        except Exception as e:
+            print(f"[JARVIS DB] Error saving conversation: {e}")
+
+    def delete_conversation(self, conv_id: str):
+        self._init_convo_db()
+        try:
+            with sqlite3.connect(CONVO_DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+                conn.commit()
+        except Exception as e:
+            print(f"[JARVIS DB] Error deleting conversation: {e}")
+
+    def log_activity(self, title: str, module: str, log_type: str = "System", status: str = "Success", latency: str = "100ms"):
+        try:
+            now = time.strftime('%Y-%m-%d %H:%M:%S')
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO activity_logs (title, module, type, status, latency, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (title, module, log_type, status, latency, now))
+                conn.commit()
+        except Exception as e:
+            print(f"[JARVIS DB] Error logging activity: {e}")
+
+    def get_activity_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT ?", (limit,))
+                rows = cursor.fetchall()
+                return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"[JARVIS DB] Error fetching activity logs: {e}")
             return []
 
 

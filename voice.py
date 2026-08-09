@@ -22,6 +22,10 @@ try:
 except ImportError:
     WhisperModel = None
 
+import threading
+
+MIC_LOCK = threading.Lock()
+
 COLOR_VOICE = "\033[1;35m"
 COLOR_INFO = "\033[1;36m"
 COLOR_RESET = "\033[0m"
@@ -110,27 +114,28 @@ class VoiceEngine:
         speech_started = False
 
         try:
-            with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
-                calib1, _ = stream.read(chunk_samples)
-                calib2, _ = stream.read(chunk_samples)
-                ambient_level = float(np.max(np.abs(np.concatenate([calib1, calib2]))))
-                silence_threshold = max(ambient_level * 1.5, 0.02)
+            with MIC_LOCK:
+                with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
+                    calib1, _ = stream.read(chunk_samples)
+                    calib2, _ = stream.read(chunk_samples)
+                    ambient_level = float(np.max(np.abs(np.concatenate([calib1, calib2]))))
+                    silence_threshold = max(ambient_level * 1.5, 0.02)
 
-                for _ in range(max_chunks):
-                    data, _ = stream.read(chunk_samples)
-                    amp = float(np.max(np.abs(data)))
-                    recorded_chunks.append(data)
+                    for _ in range(max_chunks):
+                        data, _ = stream.read(chunk_samples)
+                        amp = float(np.max(np.abs(data)))
+                        recorded_chunks.append(data)
 
-                    if amp > silence_threshold:
-                        speech_started = True
-                        silent_chunks_count = 0
-                    elif speech_started:
-                        silent_chunks_count += 1
-                        if silent_chunks_count * chunk_duration >= 1.0:
-                            break
-                    else:
-                        if len(recorded_chunks) * chunk_duration > 4.0:
-                            break
+                        if amp > silence_threshold:
+                            speech_started = True
+                            silent_chunks_count = 0
+                        elif speech_started:
+                            silent_chunks_count += 1
+                            if silent_chunks_count * chunk_duration >= 1.2:
+                                break
+                        else:
+                            if len(recorded_chunks) * chunk_duration > 4.0:
+                                break
 
             if not recorded_chunks or not speech_started:
                 print(f"{COLOR_INFO}[VOICE] No speech detected.{COLOR_RESET}")
@@ -219,7 +224,7 @@ class VoiceEngine:
 
         try:
             import subprocess
-            self._current_proc = subprocess.Popen(["say", "-v", "Daniel", clean_text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._current_proc = subprocess.Popen(["say", "-v", "Daniel", "-r", "225", clean_text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self._current_proc.wait()
             self._current_proc = None
         except Exception:

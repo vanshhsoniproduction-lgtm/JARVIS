@@ -114,7 +114,7 @@ def fetch_weather(city: Optional[str] = None, lat: Optional[float] = None, lon: 
     else:
         target_lat = geo_info["lat"]
         target_lon = geo_info["lon"]
-        location_label = f"City of {geo_info['city']}, {geo_info['region']}"
+        location_label = f"IP Location Estimate ({geo_info['city']}, {geo_info['region']})"
 
     try:
         if is_custom_city:
