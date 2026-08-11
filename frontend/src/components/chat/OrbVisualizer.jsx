@@ -1,8 +1,20 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Mic, Loader2, Volume2, Square, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function OrbVisualizer({ state, onTriggerVoice, onHalt }) {
+  const [amplitude, setAmplitude] = useState(0);
+
+  useEffect(() => {
+    const sse = new EventSource("http://127.0.0.1:8765/api/mic_state");
+    sse.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setAmplitude(data.amplitude || 0);
+      } catch (err) {}
+    };
+    return () => sse.close();
+  }, []);
   const stateConfig = {
     idle: {
       borderColor: "border-zinc-800",
@@ -59,8 +71,20 @@ export function OrbVisualizer({ state, onTriggerVoice, onHalt }) {
   return (
     <div className="flex flex-col items-center justify-center py-4 select-none">
       <div className="relative flex items-center justify-center">
-        {/* Subtle Wave Rings for active state */}
-        {(state === "listening" || state === "speaking") && (
+        {/* Dynamic Amplitude Ring */}
+        {(state === "listening" || state === "idle") && amplitude > 0.05 && (
+          <div 
+            className="absolute rounded-full border border-zinc-500/50 bg-zinc-800/20 transition-all duration-75"
+            style={{ 
+              width: `${100 + amplitude * 200}px`, 
+              height: `${100 + amplitude * 200}px`,
+              opacity: Math.min(amplitude * 2, 0.8)
+            }}
+          />
+        )}
+        
+        {/* Subtle Wave Rings for active processing/speaking */}
+        {(state === "processing" || state === "speaking") && (
           <div className="absolute w-28 h-28 rounded-full border border-zinc-700/50 animate-ping opacity-25" />
         )}
 

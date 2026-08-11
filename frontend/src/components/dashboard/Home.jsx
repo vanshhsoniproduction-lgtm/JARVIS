@@ -24,7 +24,7 @@ export function Home({ onTriggerVoice, recentConversations = [], onNewConversati
 
   React.useEffect(() => {
     import("@/services/settingsService").then((mod) => {
-      setSettings(mod.getSettings());
+      mod.fetchSettingsFromServer().then(setSettings);
     });
   }, []);
 

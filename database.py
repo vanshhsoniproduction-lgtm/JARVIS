@@ -19,92 +19,26 @@ import sqlite3
 import os
 import time
 from typing import List, Dict, Any, Optional
+import numpy as np
 
-# Save database inside database/ directory
-DB_DIR = os.path.join(os.path.dirname(__file__), "database")
-os.makedirs(DB_DIR, exist_ok=True)
-DB_PATH = os.path.join(DB_DIR, "memory.db")
-CONVO_DB_PATH = os.path.join(DB_DIR, "conversations.db")
+DB_PATH = "database/memory.db"
+CONVO_DB_PATH = "database/conversations.db"
 
-# Stop words — these are too common to be useful search terms
-STOP_WORDS = {
-    # English
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "do", "does", "did", "has", "have", "had", "in", "on", "at", "to",
-    "of", "for", "and", "or", "but", "not", "so", "if", "it", "its",
-    "he", "she", "we", "they", "me", "him", "her", "us", "them",
-    "this", "that", "these", "those", "with", "from", "by", "up",
-    "about", "into", "over", "after", "as", "no", "yes",
-    # Hindi/Hinglish filler
-    "ka", "ki", "ke", "ko", "se", "ne", "pe", "par", "aur",
-    "hai", "hain", "tha", "thi", "ho", "tu", "tum",
-}
+# Lazy load sentence-transformers to avoid blocking import
+_embed_model = None
 
-# Rich Synonym Map for Context-Aware Memory Search
-SYNONYMS = {
-    # Vehicles
-    "car": ["vehicle", "alto", "gadi", "gaddi", "gaadi", "drive", "ride", "auto", "maruti", "sedan", "hatchback", "konci", "konsi"],
-    "vehicle": ["car", "alto", "gadi", "gaddi", "gaadi", "bike", "scooter", "motorcycle", "bullet", "konci", "konsi"],
-    "gadi": ["car", "alto", "vehicle", "gaddi", "gaadi", "bike"],
-    "gaadi": ["car", "alto", "vehicle", "gadi", "gaddi", "bike"],
-    "gaddi": ["car", "alto", "vehicle", "gadi", "gaadi", "bike"],
-    "konci": ["car", "vehicle", "gadi", "bike"],
-    "konsi": ["car", "vehicle", "gadi", "bike"],
-    "bike": ["motorcycle", "bullet", "ride", "vehicle", "royal enfield", "scooty"],
-    "alto": ["car", "vehicle", "maruti", "k10", "gadi"],
-    "bullet": ["bike", "motorcycle", "royal enfield", "vehicle"],
-    # Devices
-    "phone": ["iphone", "mobile", "smartphone", "device"],
-    "laptop": ["macbook", "computer", "device", "pc"],
-    "macbook": ["laptop", "apple", "mac", "device"],
-    # Preferences
-    "drink": ["coffee", "tea", "chai", "beverage"],
-    "coffee": ["drink", "beverage", "cafe"],
-    "tea": ["chai", "drink", "beverage"],
-    "chai": ["tea", "drink"],
-    "food": ["eat", "khana", "cuisine", "dish"],
-    "like": ["love", "prefer", "enjoy", "pasand", "favorite", "favourite"],
-    "pasand": ["like", "love", "prefer", "favorite"],
-    # People
-    "name": ["vansh", "called", "known as"],
-    "father": ["dad", "papa", "abba", "parent"],
-    "mother": ["mom", "maa", "ammi", "parent"],
-    "brother": ["bhai", "sibling"],
-    "sister": ["behen", "didi", "sibling"],
-    "girlfriend": ["gf", "partner"],
-    "gf": ["girlfriend", "partner"],
-    "boyfriend": ["bf", "partner"],
-    "bf": ["boyfriend", "partner"],
-    "friend": ["dost", "yaar", "buddy"],
-    # Location
-    "live": ["city", "location", "address", "rehta", "stay", "home", "ghar", "hometown", "amritsar"],
-    "city": ["live", "location", "amritsar", "delhi", "mumbai", "hometown"],
-    "hometown": ["home", "town", "city", "amritsar", "native", "born", "live", "origin"],
-    "home": ["ghar", "house", "flat", "apartment", "hometown"],
-    "ghar": ["home", "house", "flat", "hometown"],
-    # Education / Work
-    "study": ["college", "university", "padhai", "education", "degree"],
-    "college": ["study", "university", "institute", "education"],
-    "work": ["job", "company", "office", "kaam", "naukri"],
-    "job": ["work", "company", "office", "career"],
-    # Projects
-    "project": ["app", "code", "building", "developing", "jarvis"],
-    # AI and tech
-    "ai": ["artificial intelligence", "ml", "machine learning", "model"],
-    "ml": ["machine learning", "ai", "model"],
-    # Personal
-    "age": ["year old", "years old", "born", "birthday", "dob"],
-    "birthday": ["born", "dob", "age", "year old"],
-    "old": ["age", "year", "years"],
-    # Health
-    "medical": ["health", "illness", "cold", "fever", "history", "histry", "sick", "doctor", "condition"],
-    "history": ["past", "medical", "health", "histry", "previous", "record", "illness"],
-    "histry": ["past", "medical", "health", "history", "previous", "record", "illness"],
-    "cold": ["zukam", "sardi", "nazla", "bimaar", "sick", "ill", "medical", "history"],
-    "fever": ["bukhar", "temperature", "bimaar", "sick", "medical", "history"],
-    "headache": ["sar dard", "sir dard", "migraine"],
-    "sick": ["bimaar", "tabiyat", "cold", "fever", "ill", "medical"],
-}
+def get_embed_model():
+    global _embed_model
+    if _embed_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            _embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+        except ImportError:
+            _embed_model = None
+    return _embed_model
+
+def cosine_similarity(vec1, vec2):
+    return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2) + 1e-9)
 
 
 class MemoryDatabase:
@@ -144,6 +78,11 @@ class MemoryDatabase:
                     cursor.execute("ALTER TABLE memories ADD COLUMN source_conversation_id TEXT")
                 if "source_message_id" not in columns:
                     cursor.execute("ALTER TABLE memories ADD COLUMN source_message_id TEXT")
+                if "embedding" not in columns:
+                    cursor.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
+
+                # Drop the mistakenly created conversations table from memory.db if it exists
+                cursor.execute("DROP TABLE IF EXISTS conversations")
 
                 # ── Temp States table (v3.0) ──────────────────────────────
                 # Stores ephemeral conditions like illness, exams, travel, etc.
@@ -214,70 +153,78 @@ class MemoryDatabase:
                     importance: str = "MEDIUM", source: str = "user_chat",
                     source_conversation_id: str = None, source_message_id: str = None):
         now = time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        embed_bytes = None
+        model = get_embed_model()
+        if model is not None:
+            embed_vec = model.encode(fact)
+            embed_bytes = embed_vec.astype(np.float32).tobytes()
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO memories (key, category, fact, importance, source, updated_at, source_conversation_id, source_message_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO memories (key, category, fact, importance, source, updated_at, source_conversation_id, source_message_id, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(key) DO UPDATE SET
                         fact=excluded.fact,
                         category=excluded.category,
                         importance=excluded.importance,
                         updated_at=excluded.updated_at,
                         source_conversation_id=excluded.source_conversation_id,
-                        source_message_id=excluded.source_message_id
-                """, (key, category, fact, importance, source, now, source_conversation_id, source_message_id))
+                        source_message_id=excluded.source_message_id,
+                        embedding=excluded.embedding
+                """, (key, category, fact, importance, source, now, source_conversation_id, source_message_id, embed_bytes))
                 conn.commit()
         except sqlite3.DatabaseError as e:
             print(f"[JARVIS DB] Warning: Failed to save memory: {e}")
 
     def search_memories(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Context-aware memory retrieval using keyword matching + synonyms + relevance scoring."""
-        raw_words = [w.lower() for w in query.split() if w.lower() not in STOP_WORDS and len(w) > 0]
-        words = list(raw_words)
-
-        for w in raw_words:
-            if w in SYNONYMS:
-                words.extend(SYNONYMS[w])
-
-        words = list(set(words))
-
+        """Context-aware memory retrieval using semantic embeddings."""
+        model = get_embed_model()
+        
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
+                
+                # Fetch all memories
+                cursor.execute("SELECT * FROM memories")
+                rows = [dict(row) for row in cursor.fetchall()]
 
-                if not words:
-                    cursor.execute("SELECT * FROM memories ORDER BY id DESC LIMIT ?", (limit,))
-                else:
-                    like_clauses = " OR ".join(
-                        ["fact LIKE ? OR category LIKE ? OR key LIKE ?" for _ in words]
-                    )
-                    params = []
-                    for w in words:
-                        params.extend([f"%{w}%", f"%{w}%", f"%{w}%"])
+                if not rows or not query or model is None:
+                    # Fallback if no model or empty query
+                    return sorted(rows, key=lambda x: x["id"], reverse=True)[:limit]
 
-                    sql = f"""
-                        SELECT *,
-                        (
-                            CASE importance
-                                WHEN 'HIGH' THEN 3
-                                WHEN 'MEDIUM' THEN 2
-                                WHEN 'TEMPORARY' THEN 1
-                                ELSE 1
-                            END
-                        ) AS weight
-                        FROM memories
-                        WHERE {like_clauses}
-                        ORDER BY weight DESC, updated_at DESC, id DESC
-                        LIMIT ?
-                    """
-                    params.append(limit)
-                    cursor.execute(sql, params)
-
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
+                # Compute query embedding
+                query_vec = model.encode(query).astype(np.float32)
+                
+                scored_rows = []
+                for row in rows:
+                    if row.get("embedding"):
+                        row_vec = np.frombuffer(row["embedding"], dtype=np.float32)
+                        score = cosine_similarity(query_vec, row_vec)
+                        
+                        # Add small boost for HIGH importance
+                        if row.get("importance") == "HIGH":
+                            score += 0.05
+                            
+                        scored_rows.append((score, row))
+                    else:
+                        scored_rows.append((0.0, row))
+                
+                # Sort by score descending
+                scored_rows.sort(key=lambda x: x[0], reverse=True)
+                
+                # Return top matches above a low threshold
+                results = [row for score, row in scored_rows if score > 0.2]
+                
+                # Strip embeddings before returning to save memory
+                for row in results:
+                    row.pop("embedding", None)
+                    
+                return results[:limit]
+                
         except sqlite3.DatabaseError as e:
             print(f"[JARVIS DB] Warning: Search failed: {e}")
             return []
@@ -526,10 +473,16 @@ class MemoryDatabase:
             print(f"[JARVIS DB] Warning: Failed to get stale temp states: {e}")
             return []
 
+
+class ConversationDatabase:
+    def __init__(self, db_path: str = CONVO_DB_PATH):
+        self.db_path = db_path
+        self._init_convo_db()
+
     def _init_convo_db(self):
         """Initialize separate conversations.db SQLite database."""
         try:
-            with sqlite3.connect(CONVO_DB_PATH) as conn:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS conversations (
@@ -549,7 +502,7 @@ class MemoryDatabase:
         self._init_convo_db()
         try:
             import json
-            with sqlite3.connect(CONVO_DB_PATH) as conn:
+            with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM conversations ORDER BY updated_at DESC")
@@ -577,7 +530,7 @@ class MemoryDatabase:
             import json
             now = time.strftime('%Y-%m-%d %H:%M:%S')
             msgs_json = json.dumps(messages)
-            with sqlite3.connect(CONVO_DB_PATH) as conn:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO conversations (id, title, workspace_id, pinned, messages_json, updated_at)
@@ -596,7 +549,7 @@ class MemoryDatabase:
     def delete_conversation(self, conv_id: str):
         self._init_convo_db()
         try:
-            with sqlite3.connect(CONVO_DB_PATH) as conn:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
                 conn.commit()

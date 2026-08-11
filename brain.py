@@ -34,10 +34,9 @@ from config import (
     MAX_HISTORY_TURNS,
     TTS_SENTENCE_STREAMING,
     PROACTIVE_CHECK_IN_HOURS,
-    PROACTIVE_CHECK_IN_COOLDOWN_TURNS,
+    PROACTIVE_CHECK_IN_COOLDOWN_TURNS
 )
 from prompts import PromptManager
-from router import IntentRouter
 from tools.weather import fetch_weather, extract_city
 from memory import MemoryEngine
 from voice import VoiceEngine
@@ -221,15 +220,13 @@ class JarvisBrain:
             print(f"{COLOR_INFO}[JARVIS Proactive] {proactive_question}{COLOR_RESET}\n")
             self.voice.speak_sentence(proactive_question)
 
-        # ── 1. Route Intent ───────────────────────────────────────────────────
-        route_info = IntentRouter.route(user_input)
-        intent = route_info["intent"]
-        prompt_type = route_info["prompt_type"]
-        deep = route_info["deep"]
-        should_fetch_weather = route_info["fetch_weather"]
-
-        # ── 2. Autonomous Zero-Shot LLM State Extraction ─────────────────────
+        # ── 1. Route Intent & Autonomous Zero-Shot LLM State Extraction ─────
         updates = self.extractor.extract_state_updates(user_input)
+        
+        intent = updates.get("intent", "CHAT")
+        prompt_type = updates.get("prompt_type", "chat")
+        deep = updates.get("deep", False)
+        should_fetch_weather = updates.get("fetch_weather", False)
 
         if updates.get("new_condition"):
             saved = self.memory.save_dynamic_condition(updates["new_condition"])

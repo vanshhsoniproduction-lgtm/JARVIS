@@ -5,14 +5,18 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { getSettings, saveSettings } from "@/services/settingsService";
+import { getSettings, saveSettings, fetchSettingsFromServer, saveSettingsToServer } from "@/services/settingsService";
 import { fetchMemories, deleteMemory } from "@/lib/api";
 
 export function SettingsPage() {
   const [settings, setSettingsState] = useState(getSettings());
   const [clearing, setClearing] = useState(false);
 
-  const handleToggle = (section, key) => {
+  useEffect(() => {
+    fetchSettingsFromServer().then(setSettingsState);
+  }, []);
+
+  const handleToggle = async (section, key) => {
     const updated = {
       ...settings,
       [section]: {
@@ -22,6 +26,7 @@ export function SettingsPage() {
     };
     setSettingsState(updated);
     saveSettings(updated);
+    await saveSettingsToServer(updated);
   };
 
   const handleClearAllMemories = async () => {

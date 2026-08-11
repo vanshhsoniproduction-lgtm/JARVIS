@@ -3,10 +3,14 @@ import { User, Shield, Sparkles, MapPin, HeartPulse } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { getSettings } from "@/services/settingsService";
+import { getSettings, fetchSettingsFromServer } from "@/services/settingsService";
 
 export function ProfilePage({ telemetry }) {
   const [settings, setSettings] = useState(getSettings());
+
+  useEffect(() => {
+    fetchSettingsFromServer().then(setSettings);
+  }, []);
 
   const userName = settings.user?.name || "Primary User";
   const initials = userName.split(" ").map((n) => n[0]).join("").toUpperCase().substring(0, 2);
@@ -55,12 +59,15 @@ export function ProfilePage({ telemetry }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-sans">
           <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-lg space-y-1">
             <span className="text-[10px] font-mono text-zinc-500 block uppercase">Tone & Style</span>
-            <p className="text-zinc-200 font-medium">Concise, intelligent, technical, and respectful (Tony Stark HUD aesthetic)</p>
+            <p className="text-zinc-200 font-medium">
+              {settings.ai?.temperature < 0.5 ? "Concise, factual, and strictly technical" : "Balanced, conversational, and technical"}
+              {" "} (Temp: {settings.ai?.temperature || 0.7})
+            </p>
           </div>
 
           <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-lg space-y-1">
             <span className="text-[10px] font-mono text-zinc-500 block uppercase">Language Preference</span>
-            <p className="text-zinc-200 font-medium">Bilingual English + Hinglish (Amritsar context awareness)</p>
+            <p className="text-zinc-200 font-medium">{settings.general?.language || "English"}</p>
           </div>
         </div>
       </Card>

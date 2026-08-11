@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brain import JarvisBrain
 from tools.weather import get_user_ip_geo, fetch_weather
 from wake_word import WakeWordEngine, play_chime
+from database import ConversationDatabase
 
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
@@ -43,15 +44,89 @@ class ThreadedAdapter(ServerAdapter):
 
 app = Bottle()
 brain: JarvisBrain = None
+convo_db = ConversationDatabase()
 wake_engine: WakeWordEngine = None
 wake_triggered_flag = False
 wake_lock = threading.Lock()
+
+current_mic_amplitude = 0.0
 
 # Server-side busy lock — blocks wake triggers + poll responses during active turns
 is_server_busy = False
 busy_lock = threading.Lock()
 voice_busy_timer = None
 
+SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
+DEFAULT_SETTINGS = {
+  "user": {
+    "name": "Vansh Soni",
+    "hometown": "Amritsar, Punjab",
+    "addressTerm": "Sir",
+  },
+  "general": {
+    "startupBehavior": "home",
+    "language": "English / Hinglish",
+    "timezone": "Asia/Kolkata (IST)",
+    "notifications": True,
+    "animationIntensity": "subtle",
+  },
+  "appearance": {
+    "theme": "dark",
+    "accentColor": "zinc",
+    "density": "comfortable",
+    "sidebarBehavior": "expanded",
+    "fontSize": "sm",
+  },
+  "ai": {
+    "model": "Qwen3-8B Q4_K_M",
+    "backend": "llama.cpp",
+    "acceleration": "Metal GPU",
+    "temperature": 0.7,
+    "contextLength": 4096,
+    "maxTokens": 1024,
+    "streaming": True,
+  },
+  "voice": {
+    "sttEngine": "Faster-Whisper (base.en)",
+    "ttsEngine": "macOS Say TTS",
+    "voice": "Daniel (Mac Native)",
+    "speed": 1.0,
+    "volume": 100,
+    "wakeWord": "Hey JARVIS",
+    "autoSpeak": False,
+    "wakeWordEnabled": True,
+  },
+  "memory": {
+    "enabled": True,
+    "autoExtraction": True,
+    "tempMemory": True,
+    "longTermMemory": True,
+  },
+  "privacy": {
+    "localProcessing": True,
+    "cloudAi": False,
+    "telemetry": False,
+    "dataCollection": False,
+    "internetAccess": "Ask",
+  },
+}
+
+def load_settings():
+    if not os.path.exists(SETTINGS_PATH):
+        return DEFAULT_SETTINGS
+    try:
+        with open(SETTINGS_PATH, 'r') as f:
+            return {**DEFAULT_SETTINGS, **json.load(f)}
+    except Exception:
+        return DEFAULT_SETTINGS
+
+def save_settings(new_settings):
+    try:
+        with open(SETTINGS_PATH, 'w') as f:
+            json.dump(new_settings, f, indent=2)
+        return True
+    except Exception:
+        return False
 
 def _reset_voice_busy_lock():
     global is_server_busy, voice_busy_timer
@@ -99,23 +174,49 @@ def index():
 
 @app.route('/api/poll_wake', method=['GET', 'OPTIONS'])
 def poll_wake():
-    global wake_triggered_flag
     if request.method == 'OPTIONS':
         return {}
-
-    response.content_type = 'application/json'
-
-    # If server is busy processing a turn, return false without erasing active trigger
-    with busy_lock:
-        if is_server_busy:
-            return json.dumps({"wake": False})
-
+    global wake_triggered_flag
+    
     with wake_lock:
         is_triggered = wake_triggered_flag
         if is_triggered:
             wake_triggered_flag = False
 
     return json.dumps({"wake": is_triggered})
+
+
+@app.route('/api/mic_state', method=['GET'])
+def mic_state_stream():
+    response.content_type = 'text/event-stream'
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['Connection'] = 'keep-alive'
+    
+    def event_stream():
+        while True:
+            state = "busy" if is_server_busy else "idle"
+            yield f"data: {json.dumps({'amplitude': current_mic_amplitude, 'state': state})}\n\n"
+            time.sleep(0.1)
+    
+    return event_stream()
+
+
+@app.route('/api/settings', method=['GET', 'POST', 'OPTIONS'])
+def handle_settings():
+    if request.method == 'OPTIONS':
+        return ""
+    
+    if request.method == 'GET':
+        return json.dumps(load_settings())
+    elif request.method == 'POST':
+        try:
+            data = request.json
+            if data:
+                save_settings(data)
+                return json.dumps({"status": "success", "settings": data})
+            return json.dumps({"error": "No data provided"})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
 
 @app.route('/api/telemetry', method=['GET', 'OPTIONS'])
@@ -470,7 +571,7 @@ def handle_conversations():
             return json.dumps({"conversations": []})
 
         if request.method == 'GET':
-            convs = brain.memory.db.get_all_conversations()
+            convs = convo_db.get_all_conversations()
             return json.dumps({"conversations": convs})
 
         elif request.method == 'POST':
@@ -484,7 +585,7 @@ def handle_conversations():
             if not conv_id:
                 return json.dumps({"error": "Conversation ID is required"})
 
-            brain.memory.db.save_conversation(conv_id, title, workspace_id, pinned, messages)
+            convo_db.save_conversation(conv_id, title, workspace_id, pinned, messages)
             brain.memory.db.log_activity(
                 title=f"Chat Updated: {title}",
                 module="Conversation Engine",
@@ -497,7 +598,7 @@ def handle_conversations():
             conv_id = request.query.get("id", "").strip()
             if not conv_id:
                 return json.dumps({"error": "ID parameter required"})
-            brain.memory.db.delete_conversation(conv_id)
+            convo_db.delete_conversation(conv_id)
             brain.memory.db.log_activity(
                 title=f"Chat Deleted: {conv_id}",
                 module="Conversation Engine",
@@ -720,7 +821,11 @@ def run_server(model_path: str = "./model/Qwen3-8B-Q4_K_M.gguf", port: int = 876
         with wake_lock:
             wake_triggered_flag = True
 
-    wake_engine = WakeWordEngine(stt_model=brain.voice.stt_model, on_wake_callback=on_wake_triggered)
+    def on_mic_state(amp: float):
+        global current_mic_amplitude
+        current_mic_amplitude = amp
+
+    wake_engine = WakeWordEngine(on_wake_callback=on_wake_triggered, mic_state_callback=on_mic_state)
     wake_engine.start()
 
     app.run(host='127.0.0.1', port=port, quiet=True, server=ThreadedAdapter)

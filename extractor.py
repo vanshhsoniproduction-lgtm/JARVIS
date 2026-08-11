@@ -14,6 +14,10 @@ EXTRACTION_SYSTEM_PROMPT = """You are JARVIS's state extraction and tool routing
 
 OUTPUT ONLY VALID JSON with these exact keys:
 {
+  "intent": "ROAST|HEALTH_RESOLVED|HEALTH_STATE|MEMORY_QUERY|MEMORY_SAVE|WEATHER|CODING|MATH|GENERAL_QA|TRANSLATION|SEARCH|SYSTEM_COMMAND|FILES|VISION|CHAT",
+  "prompt_type": "roast|chat|memory|coder|teacher",
+  "deep": true/false (true if CODING or MATH, else false),
+  "fetch_weather": true/false (true if WEATHER intent, else false),
   "new_condition": "Name of new health/illness/injury condition reported, or null",
   "resolved_condition": "Name of condition cured/recovered from, or null",
   "permanent_fact": "Factual statement about user's personal identity/preference/possessions to remember long-term, or null",
@@ -27,20 +31,21 @@ Rules:
 3. ONLY extract "permanent_fact" for durable user facts explicitly declared by the user (e.g., "I own a red Tesla", "I live in Amritsar", "My name is Vansh"). Do NOT extract questions, requests, or meta-statements.
 4. Set "needs_weather" to TRUE for ANY query touching location, sky, rain, weather, temperature, humidity, or hourly forecast (e.g. "where am I", "will it rain at 3 PM", "rainfall chances", "is it humid").
 5. Set "needs_memory" to TRUE for questions about what you know about Vansh or stored personal memories.
-6. Output NOTHING except valid JSON.
+6. The "intent" determines the prompt_type. CODING and MATH must use prompt_type="coder" and deep=true. GENERAL_QA uses prompt_type="teacher". MEMORY_QUERY uses prompt_type="memory". ROAST uses prompt_type="roast". Everything else uses prompt_type="chat" and deep=false.
+7. Output NOTHING except valid JSON.
 
 Examples:
 Input: "I am having a little bit of cold, should I take some ice cream?"
-Output: {"new_condition": "Cold", "resolved_condition": null, "permanent_fact": null, "needs_weather": false, "needs_memory": false}
+Output: {"intent": "HEALTH_STATE", "prompt_type": "chat", "deep": false, "fetch_weather": false, "new_condition": "Cold", "resolved_condition": null, "permanent_fact": null, "needs_weather": false, "needs_memory": false}
 
 Input: "what u know abt me , and where i am rn ?"
-Output: {"new_condition": null, "resolved_condition": null, "permanent_fact": null, "needs_weather": true, "needs_memory": true}
+Output: {"intent": "MEMORY_QUERY", "prompt_type": "memory", "deep": false, "fetch_weather": true, "new_condition": null, "resolved_condition": null, "permanent_fact": null, "needs_weather": true, "needs_memory": true}
 
 Input: "today's rainfall chances ?"
-Output: {"new_condition": null, "resolved_condition": null, "permanent_fact": null, "needs_weather": true, "needs_memory": false}
+Output: {"intent": "WEATHER", "prompt_type": "chat", "deep": false, "fetch_weather": true, "new_condition": null, "resolved_condition": null, "permanent_fact": null, "needs_weather": true, "needs_memory": false}
 
-Input: "will it rain at 3 PM today?"
-Output: {"new_condition": null, "resolved_condition": null, "permanent_fact": null, "needs_weather": true, "needs_memory": false}
+Input: "write a python script to merge two arrays"
+Output: {"intent": "CODING", "prompt_type": "coder", "deep": true, "fetch_weather": false, "new_condition": null, "resolved_condition": null, "permanent_fact": null, "needs_weather": false, "needs_memory": false}
 
 Analyze this input:
 Input: "{USER_INPUT}"
@@ -53,11 +58,15 @@ class LLMExtractor:
 
     def extract_state_updates(self, user_input: str) -> Dict[str, Any]:
         """
-        Extract dynamic state updates AND tool requirements from user input using zero-shot LLM inference.
-        Returns dict with keys: 'new_condition', 'resolved_condition', 'permanent_fact', 'needs_weather', 'needs_memory'.
+        Extract dynamic state updates AND tool requirements AND intent from user input using zero-shot LLM inference.
+        Returns dict with keys: 'intent', 'prompt_type', 'deep', 'fetch_weather', 'new_condition', 'resolved_condition', 'permanent_fact', 'needs_weather', 'needs_memory'.
         """
         text = user_input.strip()
         default_res = {
+            "intent": "CHAT",
+            "prompt_type": "chat",
+            "deep": False,
+            "fetch_weather": False,
             "new_condition": None,
             "resolved_condition": None,
             "permanent_fact": None,
@@ -156,6 +165,10 @@ class LLMExtractor:
                         fact = None
 
                 return {
+                    "intent": parsed.get("intent", "CHAT"),
+                    "prompt_type": parsed.get("prompt_type", "chat"),
+                    "deep": bool(parsed.get("deep")),
+                    "fetch_weather": bool(parsed.get("fetch_weather")),
                     "new_condition": parsed.get("new_condition") if parsed.get("new_condition") and str(parsed.get("new_condition")).lower() != "null" else None,
                     "resolved_condition": parsed.get("resolved_condition") if parsed.get("resolved_condition") and str(parsed.get("resolved_condition")).lower() != "null" else None,
                     "permanent_fact": str(fact).strip() if fact else None,

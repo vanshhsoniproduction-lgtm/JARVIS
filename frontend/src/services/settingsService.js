@@ -64,6 +64,32 @@ export function getSettings() {
   }
 }
 
+export async function fetchSettingsFromServer() {
+  try {
+    const res = await fetch("http://127.0.0.1:8765/api/settings");
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
+      return data;
+    }
+  } catch (e) {
+    console.error("Failed to fetch settings from server", e);
+  }
+  return getSettings();
+}
+
+export async function saveSettingsToServer(settings) {
+  try {
+    await fetch("http://127.0.0.1:8765/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+  } catch (e) {
+    console.error("Failed to save settings to server", e);
+  }
+}
+
 export function saveSettings(settings) {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -72,12 +98,13 @@ export function saveSettings(settings) {
   }
 }
 
-export function updateSettingSection(section, data) {
+export async function updateSettingSection(section, data) {
   const settings = getSettings();
   const updated = {
     ...settings,
     [section]: { ...settings[section], ...data },
   };
   saveSettings(updated);
+  await saveSettingsToServer(updated);
   return updated;
 }
